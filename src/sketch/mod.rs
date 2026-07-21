@@ -278,6 +278,7 @@ impl fmt::Display for Sketch {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Create sketches from an iterator over sequence data
 pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
     records_readers: &mut [I],
     name: &String,
@@ -418,11 +419,7 @@ pub fn sketch_files(
                         crate::io::NeedletailIterator::new(reader)
                     }).collect::<Vec<crate::io::NeedletailIterator>>();
 
-                    let di = if let Some(structs) = &struct_strings {
-                        Some(structs[idx].clone())
-                    } else {
-                        None
-                    };
+                    let di = struct_strings.as_ref().map(|structs| structs[idx].clone());
 
                     sketch_data(
                         &mut records_readers,
