@@ -7,6 +7,10 @@ use std::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
 use indicatif::ParallelProgressIterator;
 #[cfg(not(target_arch = "wasm32"))]
+use needletail::parse_fastx_file;
+#[cfg(not(target_arch = "wasm32"))]
+use needletail::parser::Format;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +23,8 @@ use super::hashing::{nthash_iterator::NtHashIterator, HashType};
 use crate::hashing::aahash_iterator::AaHashIterator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::InputFastx;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::io::NeedletailIterator;
 #[cfg(feature = "3di")]
 use crate::structures::pdb_to_3di;
 #[cfg(not(target_arch = "wasm32"))]
@@ -396,14 +402,14 @@ pub fn sketch_files(
 
                     let reads = if seq_type == &HashType::DNA {
                         // Check if we're working with reads, and initalise the filter if so
-                        let mut reader_peek = needletail::parse_fastx_file(fastxvec[0].clone())
+                        let mut reader_peek = parse_fastx_file(fastxvec[0].clone())
                             .unwrap_or_else(|_| panic!("Invalid path/file: {}", fastxvec[0]));
                         let seq_peek = reader_peek
                             .next()
                             .expect("Invalid FASTA/Q record")
                             .expect("Invalid FASTA/Q record");
                         let mut reads = false;
-                        if seq_peek.format() == needletail::parser::Format::Fastq {
+                        if seq_peek.format() == Format::Fastq {
                             reads = true;
                             if fastxvec.len() > 2 {
                                 panic!("Input files are reads, but there are more than two input files");
@@ -415,9 +421,9 @@ pub fn sketch_files(
                     };
 
                     let mut records_readers = fastxvec.iter().map(|file| {
-                        let reader = needletail::parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
-                        crate::io::NeedletailIterator::new(reader)
-                    }).collect::<Vec<crate::io::NeedletailIterator>>();
+                        let reader = parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
+                        NeedletailIterator::new(reader)
+                    }).collect::<Vec<NeedletailIterator>>();
 
                     let di = struct_strings.as_ref().map(|structs| structs[idx].clone());
 
