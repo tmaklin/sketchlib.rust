@@ -278,6 +278,69 @@ impl fmt::Display for Sketch {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    records_readers: &mut [I],
+    name: &String,
+    concat_fasta: bool,
+    #[cfg(feature = "3di")] convert_pdb: bool,
+    k: &[usize],
+    sketch_size: u64,
+    seq_type: &HashType,
+    rc: bool,
+    min_count: u16,
+    min_qual: u8,
+    reads: bool,
+    struct_string: Option<String>,
+) -> Vec<Sketch> {
+    // Read in sequence and set up rolling hash by alphabet type
+    let mut hash_its: Vec<Box<dyn RollHash>> = match seq_type {
+        HashType::DNA => {
+
+            NtHashIterator::new(records_readers, k[0], rc, min_qual, reads)
+                .into_iter()
+                .map(|it| Box::new(it) as Box<dyn RollHash>)
+                .collect()
+        },
+        HashType::AA(level) => {
+            AaHashIterator::new(records_readers, name, level.clone(), concat_fasta)
+                .into_iter()
+                .map(|it| Box::new(it) as Box<dyn RollHash>)
+                .collect()
+        }
+        HashType::PDB => {
+            if let Some(di) = &struct_string {
+                AaHashIterator::from_3di_string(di.clone()) // TODO: clone is not ideal
+                    .into_iter()
+                    .map(|it| Box::new(it) as Box<dyn RollHash>)
+                    .collect()
+            } else {
+                AaHashIterator::from_3di_file(records_readers, name)
+                    .into_iter()
+                    .map(|it| Box::new(it) as Box<dyn RollHash>)
+                    .collect()
+            }
+        }
+    };
+
+    hash_its
+        .iter_mut()
+        .enumerate()
+        .map(|(idx, hash_it)| {
+            let sample_name = if concat_fasta {
+                format!("{name}_{}", idx + 1)
+            } else {
+                name.to_string()
+            };
+            if hash_it.seq_len() == 0 {
+                panic!("{sample_name} has no valid sequence");
+            }
+            // Run the sketching
+            Sketch::new(&mut **hash_it, &sample_name, k, sketch_size, rc, min_count)
+        })
+        .collect::<Vec<Sketch>>()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 /// Main function to create sketches from a set of input files, which is parallelised
 /// over the input files
 pub fn sketch_files(
@@ -329,49 +392,53 @@ pub fn sketch_files(
                 .enumerate()
                 .map(|(idx, (name, fastxvec))| {
                     // Read in sequence and set up rolling hash by alphabet type
-                    let mut hash_its: Vec<Box<dyn RollHash>> = match seq_type {
-                        HashType::DNA => NtHashIterator::new(fastxvec, k[0], rc, min_qual)
-                            .into_iter()
-                            .map(|it| Box::new(it) as Box<dyn RollHash>)
-                            .collect(),
-                        HashType::AA(level) => {
-                            AaHashIterator::new(fastxvec, level.clone(), concat_fasta)
-                                .into_iter()
-                                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                .collect()
-                        }
-                        HashType::PDB => {
-                            if let Some(di) = &struct_strings {
-                                log::trace!("Length of string: {}", di.len());
-                                AaHashIterator::from_3di_string(di[idx].clone()) // TODO: clone is not ideal
-                                    .into_iter()
-                                    .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                    .collect()
-                            } else {
-                                AaHashIterator::from_3di_file(fastxvec)
-                                    .into_iter()
-                                    .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                    .collect()
+
+                    let reads = if seq_type == &HashType::DNA {
+                        // Check if we're working with reads, and initalise the filter if so
+                        let mut reader_peek = needletail::parse_fastx_file(fastxvec[0].clone())
+                            .unwrap_or_else(|_| panic!("Invalid path/file: {}", fastxvec[0]));
+                        let seq_peek = reader_peek
+                            .next()
+                            .expect("Invalid FASTA/Q record")
+                            .expect("Invalid FASTA/Q record");
+                        let mut reads = false;
+                        if seq_peek.format() == needletail::parser::Format::Fastq {
+                            reads = true;
+                            if fastxvec.len() > 2 {
+                                panic!("Input files are reads, but there are more than two input files");
                             }
                         }
+                        reads
+                    } else {
+                        false
                     };
 
-                    hash_its
-                        .iter_mut()
-                        .enumerate()
-                        .map(|(idx, hash_it)| {
-                            let sample_name = if concat_fasta {
-                                format!("{name}_{}", idx + 1)
-                            } else {
-                                name.to_string()
-                            };
-                            if hash_it.seq_len() == 0 {
-                                panic!("{sample_name} has no valid sequence");
-                            }
-                            // Run the sketching
-                            Sketch::new(&mut **hash_it, &sample_name, k, sketch_size, rc, min_count)
-                        })
-                        .collect::<Vec<Sketch>>()
+                    let mut records_readers = fastxvec.iter().map(|file| {
+                        let reader = needletail::parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
+                        crate::io::NeedletailIterator::new(reader)
+                    }).collect::<Vec<crate::io::NeedletailIterator>>();
+
+                    let di = if let Some(structs) = &struct_strings {
+                        Some(structs[idx].clone())
+                    } else {
+                        None
+                    };
+
+                    sketch_data(
+                        &mut records_readers,
+                        name,
+                        concat_fasta,
+                        #[cfg(feature = "3di")]
+                        convert_pdb,
+                        k,
+                        sketch_size,
+                        seq_type,
+                        rc,
+                        min_count,
+                        min_qual,
+                        reads,
+                        di,
+                    )
                 })
                 .for_each_with(tx, |tx, sketch| {
                     // Emit the sketch results to the writer thread
