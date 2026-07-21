@@ -333,10 +333,32 @@ impl Inverted {
                     .progress_with(progress_bar)
                     .map(|((name, fastxvec), genome_idx)| {
                         let mut hash_its: Vec<Box<dyn RollHash>> = match seq_type {
-                            HashType::DNA => NtHashIterator::new(fastxvec, k, rc, min_qual)
+                            HashType::DNA => {
+                            // Check if we're working with reads, and initalise the filter if so
+                            let mut reader_peek = needletail::parse_fastx_file(fastxvec[0].clone())
+                                .unwrap_or_else(|_| panic!("Invalid path/file: {}", fastxvec[0]));
+                            let seq_peek = reader_peek
+                                .next()
+                                .expect("Invalid FASTA/Q record")
+                                .expect("Invalid FASTA/Q record");
+                            let mut reads = false;
+                            if seq_peek.format() == needletail::parser::Format::Fastq {
+                                reads = true;
+                                if fastxvec.len() > 2 {
+                                    panic!("Input files are reads, but there are more than two input files");
+                                }
+                            }
+
+                            let mut records_readers = fastxvec.iter().map(|file| {
+                                let reader = needletail::parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
+                                crate::io::NeedletailIterator::new(reader)
+                            }).collect::<Vec<crate::io::NeedletailIterator>>();
+
+                                NtHashIterator::new(&mut records_readers, k, rc, min_qual, reads)
                                 .into_iter()
                                 .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                .collect(),
+                                .collect()
+                            },
                             _ => unimplemented!("Inverted index only supported for DNA"),
                         };
 
