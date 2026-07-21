@@ -80,24 +80,26 @@ impl AaHashIterator {
         }
     }
 
-    /// Create a new aaHash iterator from a fasta file, at the set comparison level
-    pub fn new(files: &[String], level: AaLevel, concat_fasta: bool) -> Vec<Self> {
+    /// Create a new aaHash iterator from a fastX reader, at the set comparison level
+    pub fn new<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+        readers: &mut [I],
+        file: &String,
+        level: AaLevel,
+        concat_fasta: bool
+    ) -> Vec<Self> {
         let mut hash_vec = Vec::new();
 
         // Read sequence into memory (as we go through multiple times)
         log::debug!("Preprocessing sequence");
         let mut seq_hash_it = Self::default(level.clone());
-        for file in files.iter() {
-            let mut reader =
-                parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
+        for reader in readers.iter_mut() {
             loop {
                 let record_read = reader.next();
                 if let Some(record) = record_read {
-                    let seqrec = record.expect("Invalid FASTA/Q record");
-                    if seqrec.qual().is_some() {
+                    if record.1.is_some() {
                         panic!("Unexpected quality information with AA sequences in {file}. Correct sequence type set?");
                     } else {
-                        for aa in seqrec.seq().iter() {
+                        for aa in record.0.iter() {
                             if valid_aa(*aa) {
                                 seq_hash_it.seq.push(*aa)
                             } else {
@@ -124,8 +126,11 @@ impl AaHashIterator {
     }
 
     /// Create a new iterator from a 3di embedding file of a structure
-    pub fn from_3di_file(files: &[String]) -> Vec<Self> {
-        Self::new(files, AaLevel::Level1, false)
+    pub fn from_3di_file<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+        readers: &mut [I],
+        file: &String,
+    ) -> Vec<Self> {
+        Self::new(readers, file, AaLevel::Level1, false)
     }
 
     /// Create a new iterator from a 3di embedding string of a structure
