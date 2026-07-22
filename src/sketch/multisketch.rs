@@ -85,6 +85,10 @@ impl MultiSketch {
         kmer_lengths: &[usize],
         hash_type: HashType,
     ) -> Self {
+        for (idx, sketch) in sketches.iter_mut().enumerate() {
+            sketch.set_index(idx);
+        }
+
         let mut name_map = HashMap::with_capacity(sketches.len());
         for sketch in sketches.iter() {
             name_map.insert(sketch.name().to_string(), sketch.get_index());
