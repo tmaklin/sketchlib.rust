@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use super::hashing::{bloom_filter::KmerFilter, RollHash};
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::hashing::{nthash_iterator::NtHashIterator, HashType};
+use super::hashing::nthash_iterator::NtHashIterator;
+use super::hashing::HashType;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::hashing::aahash_iterator::AaHashIterator;
