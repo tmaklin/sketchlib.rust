@@ -326,6 +326,86 @@ impl fmt::Display for Sketch {
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Create sketches from an iterator over sequence data
+///
+/// # Examples
+///
+/// ## Filter an assembly and sketch only some contigs
+/// ```rust
+/// use sketchlib::sketch::{Sketch, SketchingOpts};
+/// use sketchlib::sketch::sketch_data;
+///
+/// use std::collections::HashSet;
+/// use std::path::{Path, PathBuf};
+///
+/// // Iterator for needletail records
+/// pub struct NeedletailFilterIterator {
+///     reader: Box<dyn needletail::FastxReader>,
+///     want_ids: HashSet<u32>,
+///     current_idx: u32,
+/// }
+///
+/// impl NeedletailFilterIterator {
+///     // Construct from needletail readers
+///     pub fn new(
+///         reader: Box<dyn needletail::FastxReader>,
+///         want_ids: HashSet<u32>,
+///     ) -> Self {
+///         Self {
+///             reader,
+///             want_ids,
+///             current_idx: 0_u32,
+///         }
+///     }
+/// }
+///
+/// impl Iterator for NeedletailFilterIterator {
+///     type Item = (Vec<u8>, Option<Vec<u8>>);
+///
+///     fn next(
+///         &mut self,
+///     ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+///         while let Some(try_record) = self.reader.next() {
+///             if self.want_ids.contains(&self.current_idx) {
+///                 let record = try_record.expect("Invalid fastX record");
+///                 let seq = record.seq();
+///                 let qual = record.qual().map(|qual| qual.to_vec());
+///                 self.current_idx += 1;
+///                 return Some((seq.to_vec(), qual))
+///             }
+///             self.current_idx += 1;
+///         }
+///         None
+///     }
+/// }
+///
+/// // Sketch a fastX file filtered by the index of reads to include in the sketch
+/// pub fn sketch_reads_with_filter(
+///     fastx_path: &Path,
+///     want_ids: HashSet<u32>,
+///     opts: SketchingOpts,
+/// ) -> Vec<Sketch> {
+///     let reader = needletail::parse_fastx_file(fastx_path).unwrap();
+///     let mut filtered_iters = vec![NeedletailFilterIterator::new(reader, want_ids)];
+///
+///     sketch_data(&mut filtered_iters, opts)
+/// }
+///
+/// let fastq_path_str = "tests/test_files_in/14412_3#82.contigs_velvet.fa.gz";
+/// let mut fastq_path = PathBuf::from(fastq_path_str);
+///
+/// let mut opts = SketchingOpts::default();
+/// opts.k_vals = vec![21_usize, 31_usize, 51_usize];
+/// opts.name = fastq_path_str.to_string();
+/// # opts.sketch_size = 1;
+///
+/// let want_ids: HashSet<u32> = HashSet::from_iter(vec![0_32, 5_u32, 3_u32].into_iter());
+/// let sketch = sketch_reads_with_filter(&fastq_path, want_ids, opts);
+///
+/// # let mut sketch = sketch;
+/// # assert_eq!(sketch.len(), 1);
+/// # assert_eq!(sketch[0].get_usigs(), vec![10446655729443322257_u64, 4179589106973994628, 8878020266243511022, 15496134240677377755, 12077142249206779756, 2557808496963489941, 11187838061323059739, 2644643690855717913, 4938295307178618234, 3755990044489396820, 5853149455415045639, 13413802265437751679, 13026670255550945707, 17600625581895810275, 15514998287561100248, 16224101823335952861, 7650478683895450690, 12490835276570242802, 16446545056545572452, 9136098023486151969, 14353135930022752998, 17596669057648315390, 13032397772767758586, 14311172789545189524, 8634896743882272518, 13813990681410911957, 15274287431720689540, 17130711307909519409, 14074157117691102709, 3977024316243443606, 11614473757740315713, 8590442866276072648, 3525327762139029339, 7654958233148978252, 14646652205652799167, 5876269956202259935, 16360345219485058576, 15734568599691562397, 11148612413168737116, 11587453912179871137, 2605646798685730264, 3886875076450406060]);
+/// # assert_eq!(sketch[0].name(), fastq_path_str);
+/// ```
 pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
     records_readers: &mut [I],
     opts: SketchingOpts,
