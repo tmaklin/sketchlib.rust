@@ -89,14 +89,13 @@ impl RollHash for NtHashIterator {
 impl NtHashIterator {
     #[cfg(not(target_arch = "wasm32"))]
     /// Creates a new ntHash iterator, by loading DNA sequences into memory
-    pub fn new<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    pub fn new<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         files: &mut [I],
         k: usize,
         rc: bool,
         min_qual: u8,
         reads: bool,
     ) -> Vec<Self> {
-
         let mut seq = Vec::new();
         let mut offsets = Vec::new();
         let mut acgt = [0, 0, 0, 0];
@@ -192,7 +191,7 @@ impl NtHashIterator {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn add_dna_seq<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    fn add_dna_seq<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         records: &mut I,
         min_qual: u8,
         seq: &mut Vec<u8>,
@@ -200,7 +199,6 @@ impl NtHashIterator {
         acgt: &mut [usize; 4],
         non_acgt: &mut usize,
     ) {
-
         // Current byte
         let mut b = 0;
         // Nucleotide index within byte 0-3

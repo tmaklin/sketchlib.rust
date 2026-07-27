@@ -409,7 +409,9 @@ pub fn main() -> Result<(), Error> {
                         Some(mut nn) => {
                             // Cross-query mode: query genomes never overlap ref genomes, so knn=n is valid
                             if nn > n {
-                                log::warn!("knn={nn} is higher than number of reference samples={n}");
+                                log::warn!(
+                                    "knn={nn} is higher than number of reference samples={n}"
+                                );
                                 nn = n;
                             }
                             // Cross-query mode (sparse kNN)
@@ -427,7 +429,8 @@ pub fn main() -> Result<(), Error> {
                                 *completeness_cutoff,
                             );
                             log::info!("Writing out in sparse matrix form");
-                            write!(output_file, "{distances}").expect("Error writing output distances");
+                            write!(output_file, "{distances}")
+                                .expect("Error writing output distances");
                         }
                         None => {
                             // Cross-query mode (dense, all pairs)
@@ -444,7 +447,8 @@ pub fn main() -> Result<(), Error> {
                                 *completeness_cutoff,
                             );
                             log::info!("Writing out in long matrix form");
-                            write!(output_file, "{distances}").expect("Error writing output distances");
+                            write!(output_file, "{distances}")
+                                .expect("Error writing output distances");
                         }
                     }
                 }

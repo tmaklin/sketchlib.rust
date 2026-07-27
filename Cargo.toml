@@ -31,11 +31,10 @@ crate-type = ["cdylib", "lib"]
 [features]
 3di = ["dep:pyo3", "dep:pyo3-build-config"]
 
-[dependencies]
-aligned-vec = "0.6.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # data structures
+aligned-vec = "0.6.4"
 hashbrown = { version = "0.14", features = ["rayon", "serde"] }
 ahash = ">=0.8.7"
 roaring = { version = "0.10", features = ["serde"] }
@@ -66,6 +65,7 @@ num_cpus = "1.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # data structures
+aligned-vec = "0.6.4"
 hashbrown = { version = "0.14", features = ["rayon", "serde"] }
 # ahash = ">=0.8.7"
 roaring = { version = "0.10", features = ["serde"] }

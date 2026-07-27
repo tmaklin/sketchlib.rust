@@ -79,11 +79,11 @@ impl AaHashIterator {
     }
 
     /// Create a new aaHash iterator from a fastX reader, at the set comparison level
-    pub fn new<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    pub fn new<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         readers: &mut [I],
         file: &String,
         level: AaLevel,
-        concat_fasta: bool
+        concat_fasta: bool,
     ) -> Vec<Self> {
         let mut hash_vec = Vec::new();
 
@@ -124,7 +124,7 @@ impl AaHashIterator {
     }
 
     /// Create a new iterator from a 3di embedding file of a structure
-    pub fn from_3di_file<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    pub fn from_3di_file<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         readers: &mut [I],
         file: &String,
     ) -> Vec<Self> {

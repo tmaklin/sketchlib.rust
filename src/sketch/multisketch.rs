@@ -11,10 +11,8 @@ use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::hashing::HashType;
-use crate::sketch::aligned_sketch_vec;
-use crate::sketch::num_bins;
-use crate::sketch::sketch_datafile::SketchArrayReader;
-use crate::sketch::sketch_datafile::SketchArrayWriter;
+use crate::sketch::sketch_datafile::{SketchArrayReader, SketchArrayWriter};
+use crate::sketch::{aligned_sketch_vec, aligned_sketch_vec_with_capacity, num_bins};
 use crate::sketch::{Sketch, SketchVec};
 
 use super::sketch_datafile::append_batch;
@@ -99,9 +97,10 @@ impl MultiSketch {
         let (sketchsize64, _signs_size, usigs_size) = num_bins(sketch_size);
         let kmer_stride = usigs_size as usize;
 
-        let sketch_bins = sketches.iter_mut().flat_map(|sketch| {
-            sketch.get_usigs()
-        }).collect();
+        let mut sketch_bins = aligned_sketch_vec_with_capacity(sketches.len() * kmer_stride);
+        for sketch in sketches.iter_mut() {
+            sketch_bins.extend_from_slice(&sketch.get_usigs());
+        }
 
         Self {
             sketch_size,

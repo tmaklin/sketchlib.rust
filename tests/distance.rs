@@ -365,21 +365,51 @@ mod tests {
         // Disjoint reference: 14412_3#82 + 14412_3#84 only
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "rfile_ref.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "bact_db"])
+            .args([
+                "sketch",
+                "-f",
+                "rfile_ref.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "bact_db",
+            ])
             .assert()
             .success();
 
         // Query: R6 + TIGR4
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "qfile.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "query_db"])
+            .args([
+                "sketch",
+                "-f",
+                "qfile.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "query_db",
+            ])
             .assert()
             .success();
 
         // All 4 genomes — used for self-kNN consistency test only
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "rfile.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "ref_db"])
+            .args([
+                "sketch",
+                "-f",
+                "rfile.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "ref_db",
+            ])
             .assert()
             .success();
     }
@@ -394,13 +424,18 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run sketchlib");
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         let n_lines = stdout.lines().filter(|l| !l.is_empty()).count();
-        assert_eq!(n_lines, 2, "Expected 2 queries × 1 neighbour = 2 rows, got {n_lines}");
+        assert_eq!(
+            n_lines, 2,
+            "Expected 2 queries × 1 neighbour = 2 rows, got {n_lines}"
+        );
     }
 
     /// Test 2: kNN output contains the same top-k neighbours as the dense output sorted by ANI.
@@ -428,7 +463,10 @@ mod tests {
             let reference = parts[0].to_string();
             let query = parts[1].to_string();
             let ani: f64 = parts[2].parse().expect("Could not parse ANI");
-            dense_by_query.entry(query).or_default().push((reference, ani));
+            dense_by_query
+                .entry(query)
+                .or_default()
+                .push((reference, ani));
         }
 
         // For each query, sort by ANI descending and keep top-1
@@ -441,19 +479,26 @@ mod tests {
         // kNN output columns: query(0) \t ref(1) \t ani(2)
         let knn_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run kNN dist");
         let knn_triples = parse_dist_output(&String::from_utf8(knn_out.stdout).unwrap());
 
         // Assert kNN top-1 matches dense top-1 for every query genome
         for (query, reference, knn_ani) in &knn_triples {
-            let (dense_ref, dense_ani) = dense_top1.get(query)
+            let (dense_ref, dense_ani) = dense_top1
+                .get(query)
                 .unwrap_or_else(|| panic!("Query {query} not found in dense output"));
-            assert_eq!(reference, dense_ref,
-                "Top neighbour mismatch for {query}: knn={reference}, dense={dense_ref}");
-            assert!((knn_ani - dense_ani).abs() < 1e-5,
-                "ANI mismatch for {query}/{reference}: knn={knn_ani}, dense={dense_ani}");
+            assert_eq!(
+                reference, dense_ref,
+                "Top neighbour mismatch for {query}: knn={reference}, dense={dense_ref}"
+            );
+            assert!(
+                (knn_ani - dense_ani).abs() < 1e-5,
+                "ANI mismatch for {query}/{reference}: knn={knn_ani}, dense={dense_ani}"
+            );
         }
     }
 
@@ -468,7 +513,9 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run sketchlib");
 
@@ -479,13 +526,20 @@ mod tests {
         let ref_names: HashSet<&str> = [
             "14412_3#82.contigs_velvet.fa.gz",
             "14412_3#84.contigs_velvet.fa.gz",
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         for (query, reference, _) in &triples {
-            assert!(query_names.contains(query.as_str()),
-                "Row '{query}' is not a query genome");
-            assert!(ref_names.contains(reference.as_str()),
-                "Column '{reference}' is not a reference genome");
+            assert!(
+                query_names.contains(query.as_str()),
+                "Row '{query}' is not a query genome"
+            );
+            assert!(
+                ref_names.contains(reference.as_str()),
+                "Column '{reference}' is not a reference genome"
+            );
         }
     }
 
@@ -512,7 +566,9 @@ mod tests {
         // kNN output columns: query(0) \t ref(1) \t ani(2)
         let cross_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run cross-query kNN dist");
         let cross_triples = parse_dist_output(&String::from_utf8(cross_out.stdout).unwrap());
@@ -522,11 +578,15 @@ mod tests {
         let bact_names: HashSet<&str> = [
             "14412_3#82.contigs_velvet.fa.gz",
             "14412_3#84.contigs_velvet.fa.gz",
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         let mut self_best_bact: HashMap<String, (String, f64)> = HashMap::new();
         for query in &["R6.fa.gz", "TIGR4.fa.gz"] {
-            let best = self_triples.iter()
+            let best = self_triples
+                .iter()
                 .filter(|(q, r, _)| q == query && bact_names.contains(r.as_str()))
                 .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or_else(|| panic!("No bacterial hits for {query} in self-kNN"));
@@ -535,12 +595,17 @@ mod tests {
 
         // Compare: cross-query kNN top-1 should match self-kNN top-1 from bacterial genomes
         for (query, cross_ref, cross_ani) in &cross_triples {
-            let (self_ref, self_ani) = self_best_bact.get(query)
+            let (self_ref, self_ani) = self_best_bact
+                .get(query)
                 .unwrap_or_else(|| panic!("Query {query} not found in self-kNN"));
-            assert_eq!(cross_ref, self_ref,
-                "Nearest bacterial genome mismatch for {query}: cross={cross_ref}, self={self_ref}");
-            assert!((cross_ani - self_ani).abs() < 1e-5,
-                "ANI mismatch for {query}/{cross_ref}: cross={cross_ani}, self={self_ani}");
+            assert_eq!(
+                cross_ref, self_ref,
+                "Nearest bacterial genome mismatch for {query}: cross={cross_ref}, self={self_ref}"
+            );
+            assert!(
+                (cross_ani - self_ani).abs() < 1e-5,
+                "ANI mismatch for {query}/{cross_ref}: cross={cross_ani}, self={self_ani}"
+            );
         }
     }
 
@@ -573,10 +638,18 @@ mod tests {
         let comp_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
-                "dist", "bact_db", "query_db",
-                "--knn", "1", "-k", "21", "--ani",
-                "--ref-completeness-file", "ref_completeness.txt",
-                "--query-completeness-file", "query_completeness.txt",
+                "dist",
+                "bact_db",
+                "query_db",
+                "--knn",
+                "1",
+                "-k",
+                "21",
+                "--ani",
+                "--ref-completeness-file",
+                "ref_completeness.txt",
+                "--query-completeness-file",
+                "query_completeness.txt",
             ])
             .output()
             .expect("Failed to run with completeness");
@@ -606,9 +679,16 @@ mod tests {
         let bad_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
-                "dist", "bact_db", "query_db",
-                "--knn", "1", "-k", "21", "--ani",
-                "--ref-completeness-file", "bad_completeness.txt",
+                "dist",
+                "bact_db",
+                "query_db",
+                "--knn",
+                "1",
+                "-k",
+                "21",
+                "--ani",
+                "--ref-completeness-file",
+                "bad_completeness.txt",
             ])
             .output()
             .expect("Failed to run with bad completeness");
@@ -646,11 +726,20 @@ mod tests {
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 2, "Expected 2 rows (2 queries × knn=1), got {}", lines.len());
+        assert_eq!(
+            lines.len(),
+            2,
+            "Expected 2 rows (2 queries × knn=1), got {}",
+            lines.len()
+        );
 
         for line in &lines {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            assert_eq!(parts.len(), 4, "Expected 4 columns (query, ref, core, acc): {line}");
+            assert_eq!(
+                parts.len(),
+                4,
+                "Expected 4 columns (query, ref, core, acc): {line}"
+            );
             parts[2].parse::<f64>().expect("Core distance not a float");
             parts[3].parse::<f64>().expect("Acc distance not a float");
         }
@@ -668,7 +757,9 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "2", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "2", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run knn=n_ref cross-query");
 

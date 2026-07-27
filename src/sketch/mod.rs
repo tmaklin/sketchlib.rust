@@ -472,29 +472,33 @@ impl fmt::Display for Sketch {
 /// # assert_eq!(sketch[0].get_usigs(), vec![10446655729443322257_u64, 4179589106973994628, 8878020266243511022, 15496134240677377755, 12077142249206779756, 2557808496963489941, 11187838061323059739, 2644643690855717913, 4938295307178618234, 3755990044489396820, 5853149455415045639, 13413802265437751679, 13026670255550945707, 17600625581895810275, 15514998287561100248, 16224101823335952861, 7650478683895450690, 12490835276570242802, 16446545056545572452, 9136098023486151969, 14353135930022752998, 17596669057648315390, 13032397772767758586, 14311172789545189524, 8634896743882272518, 13813990681410911957, 15274287431720689540, 17130711307909519409, 14074157117691102709, 3977024316243443606, 11614473757740315713, 8590442866276072648, 3525327762139029339, 7654958233148978252, 14646652205652799167, 5876269956202259935, 16360345219485058576, 15734568599691562397, 11148612413168737116, 11587453912179871137, 2605646798685730264, 3886875076450406060]);
 /// # assert_eq!(sketch[0].name(), fastq_path_str);
 /// ```
-pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+pub fn sketch_data<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
     records_readers: &mut [I],
     opts: SketchingOpts,
-    #[cfg(feature = "3di")]
-    convert_pdb: bool,
-    #[cfg(feature = "3di")]
-    struct_string: Option<String>,
+    #[cfg(feature = "3di")] convert_pdb: bool,
+    #[cfg(feature = "3di")] struct_string: Option<String>,
 ) -> Vec<Sketch> {
     // Read in sequence and set up rolling hash by alphabet type
     let mut hash_its: Vec<Box<dyn RollHash>> = match opts.seq_type {
-        HashType::DNA => {
-
-            NtHashIterator::new(records_readers, opts.k_vals[0], opts.add_rc, opts.min_qual, opts.is_reads)
-                .into_iter()
-                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                .collect()
-        },
-        HashType::AA(level) => {
-            AaHashIterator::new(records_readers, &opts.name, level.clone(), opts.concat_fasta)
-                .into_iter()
-                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                .collect()
-        }
+        HashType::DNA => NtHashIterator::new(
+            records_readers,
+            opts.k_vals[0],
+            opts.add_rc,
+            opts.min_qual,
+            opts.is_reads,
+        )
+        .into_iter()
+        .map(|it| Box::new(it) as Box<dyn RollHash>)
+        .collect(),
+        HashType::AA(level) => AaHashIterator::new(
+            records_readers,
+            &opts.name,
+            level.clone(),
+            opts.concat_fasta,
+        )
+        .into_iter()
+        .map(|it| Box::new(it) as Box<dyn RollHash>)
+        .collect(),
         HashType::PDB => {
             #[cfg(feature = "3di")]
             if let Some(di) = &struct_string {
@@ -529,7 +533,14 @@ pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
                 panic!("{sample_name} has no valid sequence");
             }
             // Run the sketching
-            Sketch::new(&mut **hash_it, &sample_name, &opts.k_vals, opts.sketch_size, opts.add_rc, opts.min_count)
+            Sketch::new(
+                &mut **hash_it,
+                &sample_name,
+                &opts.k_vals,
+                opts.sketch_size,
+                opts.add_rc,
+                opts.min_count,
+            )
         })
         .collect::<Vec<Sketch>>()
 }
