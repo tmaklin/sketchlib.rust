@@ -12,14 +12,13 @@ pub fn jaccard_index(
     completeness_cutoff: f64,
 ) -> f64 {
     let samebits = jaccard_same_bits(sketch1, sketch2) as f64;
-    // Correction for random matches
-    let expected_random = sketchsize64 as f64 / (1u64 << BIN_BITS) as f64;
-    let samebits_corrected = ((samebits - expected_random) / (sketchsize64 as f64 - expected_random)).clamp(0.0, 1.0);
-
     let unionsize = (u64::BITS as u64 * sketchsize64) as f64;
-    let mut jaccard_index = samebits / unionsize;
+    // Correction for random matches
+    let expected_random = unionsize / (1u64 << BIN_BITS) as f64;
+    let mut jaccard_index =
+        ((samebits - expected_random) / (unionsize - expected_random)).clamp(0.0, 1.0);
 
-    log::trace!("samebits:{samebits} samebits:{samebits_corrected} jaccard:{jaccard_index}");
+    log::trace!("samebits:{samebits} expected_random:{expected_random} jaccard:{jaccard_index}");
 
     // Apply completeness correction if both completeness values are provided
     if let (Some(c1_val), Some(c2_val)) = (c1, c2) {
@@ -153,6 +152,38 @@ mod tests {
         let scalar = jaccard_same_bits_general(&sketch1, &sketch2);
         let neon = unsafe { jaccard_neon_unroll2_inner(&sketch1, &sketch2) };
         assert_eq!(neon, scalar);
+    }
+
+    #[test]
+    fn random_match_correction_applied_for_large_sketch_size() {
+        // sketchsize64 chosen so that unionsize = sketchsize64 * 64 exceeds
+        // 2^BIN_BITS, the regime the random-match correction is meant for.
+        let sketchsize64: u64 = 2048;
+        let unionsize = (u64::BITS as u64 * sketchsize64) as f64;
+        assert!(unionsize > (1u64 << BIN_BITS) as f64);
+
+        let n_chunks = sketchsize64 as usize;
+        let sketch1 = vec![u64::MAX; BIN_BITS * n_chunks];
+        let mut sketch2 = sketch1.clone();
+        // Mismatch exactly one chunk (one 64-bit "column") out of n_chunks.
+        for word in sketch2[..BIN_BITS].iter_mut() {
+            *word = 0;
+        }
+
+        let samebits = jaccard_same_bits_general(&sketch1, &sketch2) as f64;
+        let expected_random = unionsize / (1u64 << BIN_BITS) as f64;
+        let expected_jaccard =
+            ((samebits - expected_random) / (unionsize - expected_random)).clamp(0.0, 1.0);
+        // The correction should be non-trivial (i.e. not equal to the raw,
+        // uncorrected ratio) for this sketch size.
+        assert!((expected_jaccard - samebits / unionsize).abs() > f64::EPSILON);
+
+        let jaccard = jaccard_index(&sketch1, &sketch2, sketchsize64, None, None, 0.0);
+        assert_eq!(jaccard, expected_jaccard);
+
+        // Identical sketches should give a jaccard index of exactly 1.0.
+        let identical = jaccard_index(&sketch1, &sketch1, sketchsize64, None, None, 0.0);
+        assert_eq!(identical, 1.0);
     }
 }
 
