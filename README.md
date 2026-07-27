@@ -18,31 +18,6 @@ allowing subsets of samples to be compared.
 v0.2.0 is the first stable release. We intend to keep the file format unchanged after this
 point so sketch libraries will not need to be rebuilt.
 
-### Citation
-
-No preprint or paper yet sorry.
-
-Some description in:
-
-Lees JA, Tonkin-Hill G, Yang Z, Corander J.
-Mandrake: visualizing microbial population structure by embedding millions of
-genomes into a low-dimensional representation. *Philosophical Transactions of
-The Royal Society B*. 2022;377: 20210237.
-
-https://doi.org/10.1098/rstb.2021.0237
-
-We rely on algorithms from:
-
-*bindash* (written by XiaoFei Zhao):\
-Zhao, X. BinDash, software for fast genome distance estimation on a typical personal laptop.\
-*Bioinformatics* **35**:671–673 (2019).\
-doi:[10.1093/bioinformatics/bty651](https://dx.doi.org/10.1093/bioinformatics/bty651)
-
-*ntHash* (written by Hamid Mohamadi):\
-Mohamadi, H., Chu, J., Vandervalk, B. P. & Birol, I. ntHash: recursive nucleotide hashing.\
-*Bioinformatics* **32**:3492–3494 (2016).\
-doi:[10.1093/bioinformatics/btw397](https://dx.doi.org/10.1093/bioinformatics/btw397)
-
 ## Documentation
 
 See https://docs.rs/sketchlib
@@ -72,3 +47,31 @@ xattr -d "com.apple.quarantine" ./sketchlib
 
 1. Clone the repository with git clone.
 2. Run `cargo install --path .` or `RUSTFLAGS="-C target-cpu=native" cargo install --path .` to optimise for your machine.
+
+### Citation
+
+Please cite:
+
+von Wachsmann J, Lorenz LJ, Russell MJ, Gurbich TA, Rodríguez-Bouza V, Horsfield ST, Lees JA, Finn RD (2026).\
+Rapid and consistent clustering of millions of genomes highlights the diversity of prokaryotic life.\
+*bioRxiv*. 
+
+https://doi.org/10.64898/2025.12.30.695181
+
+Lees JA, Tonkin-Hill G, Yang Z, Corander J.\
+Mandrake: visualizing microbial population structure by embedding millions of genomes into a low-dimensional representation.\
+*Philosophical Transactions of The Royal Society B*. 2022;377: 20210237.
+
+https://doi.org/10.1098/rstb.2021.0237
+
+We rely on algorithms from:
+
+*bindash* (written by XiaoFei Zhao):\
+Zhao, X. BinDash, software for fast genome distance estimation on a typical personal laptop.\
+*Bioinformatics* **35**:671–673 (2019).\
+doi:[10.1093/bioinformatics/bty651](https://dx.doi.org/10.1093/bioinformatics/bty651)
+
+*ntHash* (written by Hamid Mohamadi):\
+Mohamadi, H., Chu, J., Vandervalk, B. P. & Birol, I. ntHash: recursive nucleotide hashing.\
+*Bioinformatics* **32**:3492–3494 (2016).\
+doi:[10.1093/bioinformatics/btw397](https://dx.doi.org/10.1093/bioinformatics/btw397)
