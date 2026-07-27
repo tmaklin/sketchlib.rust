@@ -11,19 +11,21 @@ pub fn jaccard_index(
     c2: Option<f64>,
     completeness_cutoff: f64,
 ) -> f64 {
-    let unionsize = (u64::BITS as u64 * sketchsize64) as f64;
-    let samebits = jaccard_same_bits(sketch1, sketch2);
-    let raw_jaccard = samebits as f64 / unionsize;
-    let mut jaccard_index = random_match_correction(raw_jaccard);
+    let samebits = jaccard_same_bits(sketch1, sketch2) as f64;
+    // Correction for random matches
+    let expected_random = sketchsize64 as f64 / (1u64 << BIN_BITS) as f64;
+    let samebits_corrected = ((samebits - expected_random) / (sketchsize64 as f64 - expected_random)).clamp(0.0, 1.0);
 
-    log::trace!("samebits:{samebits} raw_jaccard:{raw_jaccard} jaccard:{jaccard_index}");
+    let unionsize = (u64::BITS as u64 * sketchsize64) as f64;
+    let mut jaccard_index = samebits / unionsize;
+
+    log::trace!("samebits:{samebits} samebits:{samebits_corrected} jaccard:{jaccard_index}");
 
     // Apply completeness correction if both completeness values are provided
     if let (Some(c1_val), Some(c2_val)) = (c1, c2) {
         if c1_val * c2_val >= completeness_cutoff {
-            jaccard_index = completeness_correction(jaccard_index, c1_val, c2_val);
             // Cap the corrected Jaccard index at 1.0 to prevent negative distances
-            jaccard_index = jaccard_index.min(1.0);
+            jaccard_index = completeness_correction(jaccard_index, c1_val, c2_val).min(1.0);
         }
     }
 
@@ -124,53 +126,9 @@ unsafe fn jaccard_neon_unroll2_inner(a: &[u64], b: &[u64]) -> u32 {
     total
 }
 
-#[inline(always)]
-fn random_match_correction(jaccard: f64) -> f64 {
-    let bb = (1u32 << (BIN_BITS as u32)) as f64;
-    ((bb * jaccard - 1.0).max(0.0)) / (bb - 1.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn random_match_correction_handles_expected_random_and_bounds() {
-        let bb = (1u32 << (BIN_BITS as u32)) as f64;
-        let expected_random = 1.0 / bb;
-        let raw_above_random = 0.25;
-        let expected_corrected = (bb * raw_above_random - 1.0) / (bb - 1.0);
-
-        assert_eq!(random_match_correction(expected_random), 0.0);
-        assert_eq!(random_match_correction(expected_random / 2.0), 0.0);
-        assert_eq!(random_match_correction(1.0), 1.0);
-        assert_eq!(
-            random_match_correction(raw_above_random),
-            expected_corrected
-        );
-    }
-
-    #[test]
-    fn jaccard_index_matches_expected_samebits_formula() {
-        let sketchsize64 = 1;
-        let unionsize = (u64::BITS as u64 * sketchsize64) as f64;
-        let bb = (1u32 << (BIN_BITS as u32)) as f64;
-        let expected_random_samebits = unionsize / bb;
-        let target_samebits = 42_u32;
-        let intersize = target_samebits as f64 - expected_random_samebits;
-        let previous_formula = intersize / (unionsize - expected_random_samebits);
-
-        let sketch1 = [0_u64; BIN_BITS];
-        let mut sketch2 = [0_u64; BIN_BITS];
-        sketch2[0] = (1_u64 << (u64::BITS - target_samebits)) - 1;
-
-        assert_eq!(
-            jaccard_same_bits_general(&sketch1, &sketch2),
-            target_samebits
-        );
-        let current_formula = jaccard_index(&sketch1, &sketch2, sketchsize64, None, None, 0.0);
-        assert!((current_formula - previous_formula).abs() <= f64::EPSILON);
-    }
 
     #[test]
     fn scalar_same_bits_counts_matching_bins() {

@@ -9,8 +9,7 @@
 //!   above these distances is unsupported and may lead to poor estimation of distances
 //!   without clear warning.
 //! - Short k-mer lengths are likely to match at random, see [PopPUNK's docs](https://poppunk-docs.bacpop.org/sketching.html#choosing-the-right-k-mer-lengths)
-//!   for information on how to select good lengths. Jaccard distances include random match
-//!   correction for the retained sketch signature width.
+//!   for information on how to select good lengths. 
 //! - ANI distance resolution is highly affected by sketch size at higher mismatch
 //!   levels, so note that if you see lots of samples at around 80% they may be much lower than
 //!   this. We recommend checking the Jaccard values in this case, if they are close to 0
