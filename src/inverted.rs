@@ -33,7 +33,7 @@ use crate::sketch::Sketch;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::sketch::{sketch_datafile::SketchArrayWriter, Sketch};
 use crate::utils::get_progress_bar;
-use anyhow::Error;
+use anyhow::{bail, Error};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 
@@ -44,10 +44,9 @@ use wasm_bindgen_file_reader::WebSysFile;
 
 type InvSketches = (Vec<Vec<u16>>, Vec<String>);
 
-/// Warns (does not fail) if a loaded .ski index was built with a sketchlib
-/// version older than the current minimum sketch format version. The .ski
-/// format itself hasn't changed, so this is informational only.
-fn warn_if_old_version(sketch_version: &str) {
+/// Fails if a loaded .ski index was built with a sketchlib version older
+/// than the current minimum sketch format version.
+fn check_version(sketch_version: &str) -> Result<(), Error> {
     let version_ok =
         parse_version(sketch_version).is_some_and(|version| version >= MIN_SKETCH_VERSION);
     if !version_ok {
@@ -56,13 +55,15 @@ fn warn_if_old_version(sketch_version: &str) {
         } else {
             sketch_version
         };
-        log::warn!(
-            "Inverted index was created with sketchlib v{found_version}, older than v{}.{}.{}. Consider re-sketching with the current version.",
+        log::error!(
+            "Inverted index was created with sketchlib v{found_version}, which is older than the minimum supported v{}.{}.{}. Please re-sketch with the current version.",
             MIN_SKETCH_VERSION.0,
             MIN_SKETCH_VERSION.1,
             MIN_SKETCH_VERSION.2
         );
+        bail!("Incompatible sketch file version");
     }
+    Ok(())
 }
 
 /// An inverted index and associated metadata
@@ -232,7 +233,7 @@ impl Inverted {
         let ski_file = BufReader::new(File::open(filename)?);
         let decompress_reader = snap::read::FrameDecoder::new(ski_file);
         let ski_obj: Self = rmp_serde::decode::from_read(decompress_reader)?;
-        warn_if_old_version(&ski_obj.sketch_version);
+        check_version(&ski_obj.sketch_version)?;
         Ok(ski_obj)
     }
 
@@ -244,7 +245,7 @@ impl Inverted {
         let ski_file = BufReader::new(WebSysFile::new(file.clone()));
         let decompress_reader = snap::read::FrameDecoder::new(ski_file);
         let ski_obj: Self = rmp_serde::decode::from_read(decompress_reader)?;
-        warn_if_old_version(&ski_obj.sketch_version);
+        check_version(&ski_obj.sketch_version)?;
         Ok(ski_obj)
     }
 
