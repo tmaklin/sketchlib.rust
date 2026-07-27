@@ -48,7 +48,7 @@ xattr -d "com.apple.quarantine" ./sketchlib
 1. Clone the repository with git clone.
 2. Run `cargo install --path .` or `RUSTFLAGS="-C target-cpu=native" cargo install --path .` to optimise for your machine.
 
-### Citation
+## Citation
 
 Please cite:
 
