@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated publication."
+authors:
+  - family-names: "von Wachsmann"
+    given-names: "J."
+  - family-names: "Lorenz"
+    given-names: "L. J."
+  - family-names: "Russell"
+    given-names: "M. J."
+  - family-names: "Gurbich"
+    given-names: "T. A."
+  - family-names: "Rodríguez-Bouza"
+    given-names: "V."
+  - family-names: "Horsfield"
+    given-names: "S. T."
+  - family-names: "Lees"
+    given-names: "J. A."
+  - family-names: "Finn"
+    given-names: "R. D."
+title: "Rapid and consistent clustering of millions of genomes highlights the diversity of prokaryotic life"
+type: article
+journal: "bioRxiv"
+year: 2025
+doi: "10.64898/2025.12.30.695181"
+url: "https://doi.org/10.64898/2025.12.30.695181"
