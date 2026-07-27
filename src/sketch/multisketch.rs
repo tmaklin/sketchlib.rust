@@ -17,6 +17,17 @@ use crate::sketch::{Sketch, SketchVec};
 
 use super::sketch_datafile::append_batch;
 
+/// Minimum supported .skd/.skm format version. The on-disk `MultiSketch` layout
+/// changed as of v0.4, so files written by older versions cannot be loaded.
+pub const MIN_SKETCH_VERSION: (u64, u64, u64) = (0, 4, 0);
+
+/// Parses a `major.minor.patch` version string, returning `None` if it is
+/// missing or malformed (which covers files predating the `sketch_version` field).
+pub fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.').map(str::parse::<u64>);
+    Some((parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?))
+}
+
 /// A set of sketch files, with underlying storage as .skd/.skm
 #[derive(Serialize, Deserialize)]
 pub struct MultiSketch {
@@ -37,6 +48,7 @@ pub struct MultiSketch {
     bin_stride: usize,
     kmer_stride: usize,
     sample_stride: usize,
+    #[serde(default)]
     sketch_version: String,
     hash_type: HashType,
 }
@@ -132,9 +144,27 @@ impl MultiSketch {
     pub fn load_metadata(file_prefix: &str) -> Result<Self, Error> {
         let filename = format!("{file_prefix}.skm");
         log::info!("Loading sketch metadata from {filename}");
-        let skm_file = BufReader::new(File::open(filename)?);
+        let skm_file = BufReader::new(File::open(&filename)?);
         let decompress_reader = snap::read::FrameDecoder::new(skm_file);
         let mut skm_obj: Self = ciborium::de::from_reader(decompress_reader)?;
+
+        let version_ok = parse_version(&skm_obj.sketch_version)
+            .is_some_and(|version| version >= MIN_SKETCH_VERSION);
+        if !version_ok {
+            let found_version = if skm_obj.sketch_version.is_empty() {
+                "<unknown>"
+            } else {
+                &skm_obj.sketch_version
+            };
+            log::error!(
+                "Sketch file {filename} was created with sketchlib v{found_version}, which is older than the minimum supported v{}.{}.{}. Please re-sketch with the current version.",
+                MIN_SKETCH_VERSION.0,
+                MIN_SKETCH_VERSION.1,
+                MIN_SKETCH_VERSION.2
+            );
+            bail!("Incompatible sketch file version");
+        }
+
         // For backwards compatibility (field added in v0.2.0)
         if skm_obj.sketchsize64 == 0 {
             skm_obj.sketchsize64 = skm_obj.sketch_size;

@@ -27,6 +27,7 @@ use super::hashing::{
 use crate::distances::distance_matrix::square_to_condensed;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::InputFastx;
+use crate::sketch::multisketch::{parse_version, MIN_SKETCH_VERSION};
 #[cfg(target_arch = "wasm32")]
 use crate::sketch::Sketch;
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,6 +43,27 @@ use crate::logw;
 use wasm_bindgen_file_reader::WebSysFile;
 
 type InvSketches = (Vec<Vec<u16>>, Vec<String>);
+
+/// Warns (does not fail) if a loaded .ski index was built with a sketchlib
+/// version older than the current minimum sketch format version. The .ski
+/// format itself hasn't changed, so this is informational only.
+fn warn_if_old_version(sketch_version: &str) {
+    let version_ok =
+        parse_version(sketch_version).is_some_and(|version| version >= MIN_SKETCH_VERSION);
+    if !version_ok {
+        let found_version = if sketch_version.is_empty() {
+            "<unknown>"
+        } else {
+            sketch_version
+        };
+        log::warn!(
+            "Inverted index was created with sketchlib v{found_version}, older than v{}.{}.{}. Consider re-sketching with the current version.",
+            MIN_SKETCH_VERSION.0,
+            MIN_SKETCH_VERSION.1,
+            MIN_SKETCH_VERSION.2
+        );
+    }
+}
 
 /// An inverted index and associated metadata
 #[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
@@ -210,6 +232,7 @@ impl Inverted {
         let ski_file = BufReader::new(File::open(filename)?);
         let decompress_reader = snap::read::FrameDecoder::new(ski_file);
         let ski_obj: Self = rmp_serde::decode::from_read(decompress_reader)?;
+        warn_if_old_version(&ski_obj.sketch_version);
         Ok(ski_obj)
     }
 
@@ -221,6 +244,7 @@ impl Inverted {
         let ski_file = BufReader::new(WebSysFile::new(file.clone()));
         let decompress_reader = snap::read::FrameDecoder::new(ski_file);
         let ski_obj: Self = rmp_serde::decode::from_read(decompress_reader)?;
+        warn_if_old_version(&ski_obj.sketch_version);
         Ok(ski_obj)
     }
 

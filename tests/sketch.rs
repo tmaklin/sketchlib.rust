@@ -141,58 +141,18 @@ mod tests {
     }
 
     #[test]
-    /// Check that older databases can still be read correctly
-    /// (some fields added on .skm in v0.2.0)
-    fn legacy_databases() {
+    /// The MultiSketch (.skd/.skm) format changed as of v0.4, so databases
+    /// created with older versions (this fixture is v0.1.3) must be refused
+    /// rather than silently loaded.
+    fn legacy_database_rejected() {
         use sketchlib::sketch::multisketch::MultiSketch;
         let sandbox = TestSetup::setup();
-        sandbox.copy_input_file_to_wd("R6.fa.gz");
-        sandbox.copy_input_file_to_wd("TIGR4.fa.gz");
 
-        // Old command:
-        // sketchlib sketch -v -o legacy_db --k-vals 17,21,25 -s 100 R6.fa.gz TIGR4.fa.gz
-
-        Command::new(cmd::cargo_bin!("sketchlib"))
-            .current_dir(sandbox.get_wd())
-            .arg("sketch")
-            .arg("-o")
-            .arg("new_db")
-            .args(["-v", "--k-vals", "17,21,25", "-s", "100"])
-            .arg("R6.fa.gz")
-            .arg("TIGR4.fa.gz")
-            .assert()
-            .success();
-
-        // Check legacy metadata and data still load, without requiring identical
-        // derived stride fields from old hash-space behavior.
-        let new_sketch: MultiSketch =
-            MultiSketch::load_metadata(&sandbox.file_string("new_db", TestDir::Output))
-                .expect("Failed to load new sketch");
-        let mut expected_sketch =
-            MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
-                .expect("Failed to load legacy sketch");
-
-        expected_sketch.read_sketch_data(&sandbox.file_string("legacy_db", TestDir::Input));
-
+        let err = MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect_err("Loading a pre-v0.4 sketch file should fail");
         assert!(
-            new_sketch.is_compatible_with(&expected_sketch),
-            "Legacy sketch should be compatible with newly generated sketch metadata"
-        );
-        assert_eq!(
-            new_sketch.number_samples_loaded(),
-            expected_sketch.number_samples_loaded(),
-            "Legacy sketch sample count does not match new sketch"
-        );
-        for idx in 0..new_sketch.number_samples_loaded() {
-            assert_eq!(
-                new_sketch.get_sample_name(idx),
-                expected_sketch.get_sample_name(idx),
-                "Legacy sketch sample name does not match new sketch"
-            );
-        }
-        assert!(
-            !expected_sketch.get_sketch_slice(0, 0).is_empty(),
-            "Legacy sketch data did not load"
+            err.to_string().contains("Incompatible sketch file version"),
+            "Unexpected error loading legacy sketch: {err}"
         );
     }
 }
