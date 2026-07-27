@@ -7,18 +7,25 @@ use std::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
 use indicatif::ParallelProgressIterator;
 #[cfg(not(target_arch = "wasm32"))]
+use needletail::parse_fastx_file;
+#[cfg(not(target_arch = "wasm32"))]
+use needletail::parser::Format;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::hashing::{bloom_filter::KmerFilter, RollHash};
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::hashing::{nthash_iterator::NtHashIterator, HashType};
+use super::hashing::nthash_iterator::NtHashIterator;
+use super::hashing::HashType;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::hashing::aahash_iterator::AaHashIterator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::InputFastx;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::io::NeedletailIterator;
 #[cfg(feature = "3di")]
 use crate::structures::pdb_to_3di;
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,6 +58,46 @@ pub fn num_bins(sketch_size: u64) -> (u64, u64, u64) {
     let signs_size = sketchsize64 * (u64::BITS as u64);
     let usigs_size = sketchsize64 * BBITS;
     (sketchsize64, signs_size, usigs_size)
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+/// Options and parameters used in sketching
+pub struct SketchingOpts {
+    /// Sample name
+    pub name: String,
+    /// Concatenate records in a multifasta file?
+    pub concat_fasta: bool,
+    /// k-mer sizes to use
+    pub k_vals: Vec<usize>,
+    /// Sketch size
+    pub sketch_size: u64,
+    /// Sequence type (DNA, AA)
+    pub seq_type: HashType,
+    /// Add reverse complements to sketch?
+    pub add_rc: bool,
+    /// Minimum k-mer count to use for fastq input
+    pub min_count: u16,
+    /// Minimum quality score to use for fastq input
+    pub min_qual: u8,
+    /// Is the input reads?
+    pub is_reads: bool,
+}
+
+impl Default for SketchingOpts {
+    fn default() -> SketchingOpts {
+        SketchingOpts {
+            name: String::new(),
+            concat_fasta: false,
+            k_vals: Vec::new(),
+            sketch_size: crate::cli::DEFAULT_SKETCHSIZE,
+            seq_type: HashType::DNA,
+            add_rc: crate::cli::DEFAULT_STRAND,
+            min_count: crate::cli::DEFAULT_MINCOUNT,
+            min_qual: crate::cli::DEFAULT_MINQUAL,
+            is_reads: false,
+        }
+    }
 }
 
 /// A single sample's sketch
@@ -278,6 +325,150 @@ impl fmt::Display for Sketch {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Create sketches from an iterator over sequence data
+///
+/// # Examples
+///
+/// ## Filter an assembly and sketch only some contigs
+/// ```rust
+/// use sketchlib::sketch::{Sketch, SketchingOpts};
+/// use sketchlib::sketch::sketch_data;
+///
+/// use std::collections::HashSet;
+/// use std::path::{Path, PathBuf};
+///
+/// // Iterator for needletail records
+/// pub struct NeedletailFilterIterator {
+///     reader: Box<dyn needletail::FastxReader>,
+///     want_ids: HashSet<u32>,
+///     current_idx: u32,
+/// }
+///
+/// impl NeedletailFilterIterator {
+///     // Construct from needletail readers
+///     pub fn new(
+///         reader: Box<dyn needletail::FastxReader>,
+///         want_ids: HashSet<u32>,
+///     ) -> Self {
+///         Self {
+///             reader,
+///             want_ids,
+///             current_idx: 0_u32,
+///         }
+///     }
+/// }
+///
+/// impl Iterator for NeedletailFilterIterator {
+///     type Item = (Vec<u8>, Option<Vec<u8>>);
+///
+///     fn next(
+///         &mut self,
+///     ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+///         while let Some(try_record) = self.reader.next() {
+///             if self.want_ids.contains(&self.current_idx) {
+///                 let record = try_record.expect("Invalid fastX record");
+///                 let seq = record.seq();
+///                 let qual = record.qual().map(|qual| qual.to_vec());
+///                 self.current_idx += 1;
+///                 return Some((seq.to_vec(), qual))
+///             }
+///             self.current_idx += 1;
+///         }
+///         None
+///     }
+/// }
+///
+/// // Sketch a fastX file filtered by the index of reads to include in the sketch
+/// pub fn sketch_reads_with_filter(
+///     fastx_path: &Path,
+///     want_ids: HashSet<u32>,
+///     opts: SketchingOpts,
+/// ) -> Vec<Sketch> {
+///     let reader = needletail::parse_fastx_file(fastx_path).unwrap();
+///     let mut filtered_iters = vec![NeedletailFilterIterator::new(reader, want_ids)];
+///
+///     sketch_data(&mut filtered_iters, opts)
+/// }
+///
+/// let fastq_path_str = "tests/test_files_in/14412_3#82.contigs_velvet.fa.gz";
+/// let mut fastq_path = PathBuf::from(fastq_path_str);
+///
+/// let mut opts = SketchingOpts::default();
+/// opts.k_vals = vec![21_usize, 31_usize, 51_usize];
+/// opts.name = fastq_path_str.to_string();
+/// # opts.sketch_size = 1;
+///
+/// let want_ids: HashSet<u32> = HashSet::from_iter(vec![0_32, 5_u32, 3_u32].into_iter());
+/// let sketch = sketch_reads_with_filter(&fastq_path, want_ids, opts);
+///
+/// # let mut sketch = sketch;
+/// # assert_eq!(sketch.len(), 1);
+/// # assert_eq!(sketch[0].get_usigs(), vec![10446655729443322257_u64, 4179589106973994628, 8878020266243511022, 15496134240677377755, 12077142249206779756, 2557808496963489941, 11187838061323059739, 2644643690855717913, 4938295307178618234, 3755990044489396820, 5853149455415045639, 13413802265437751679, 13026670255550945707, 17600625581895810275, 15514998287561100248, 16224101823335952861, 7650478683895450690, 12490835276570242802, 16446545056545572452, 9136098023486151969, 14353135930022752998, 17596669057648315390, 13032397772767758586, 14311172789545189524, 8634896743882272518, 13813990681410911957, 15274287431720689540, 17130711307909519409, 14074157117691102709, 3977024316243443606, 11614473757740315713, 8590442866276072648, 3525327762139029339, 7654958233148978252, 14646652205652799167, 5876269956202259935, 16360345219485058576, 15734568599691562397, 11148612413168737116, 11587453912179871137, 2605646798685730264, 3886875076450406060]);
+/// # assert_eq!(sketch[0].name(), fastq_path_str);
+/// ```
+pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+    records_readers: &mut [I],
+    opts: SketchingOpts,
+    #[cfg(feature = "3di")]
+    convert_pdb: bool,
+    #[cfg(feature = "3di")]
+    struct_string: Option<String>,
+) -> Vec<Sketch> {
+    // Read in sequence and set up rolling hash by alphabet type
+    let mut hash_its: Vec<Box<dyn RollHash>> = match opts.seq_type {
+        HashType::DNA => {
+
+            NtHashIterator::new(records_readers, opts.k_vals[0], opts.add_rc, opts.min_qual, opts.is_reads)
+                .into_iter()
+                .map(|it| Box::new(it) as Box<dyn RollHash>)
+                .collect()
+        },
+        HashType::AA(level) => {
+            AaHashIterator::new(records_readers, &opts.name, level.clone(), opts.concat_fasta)
+                .into_iter()
+                .map(|it| Box::new(it) as Box<dyn RollHash>)
+                .collect()
+        }
+        HashType::PDB => {
+            #[cfg(feature = "3di")]
+            if let Some(di) = &struct_string {
+                AaHashIterator::from_3di_string(di.clone()) // TODO: clone is not ideal
+                    .into_iter()
+                    .map(|it| Box::new(it) as Box<dyn RollHash>)
+                    .collect()
+            } else {
+                AaHashIterator::from_3di_file(records_readers, &opts.name)
+                    .into_iter()
+                    .map(|it| Box::new(it) as Box<dyn RollHash>)
+                    .collect()
+            }
+            #[cfg(not(feature = "3di"))]
+            AaHashIterator::from_3di_file(records_readers, &opts.name)
+                .into_iter()
+                .map(|it| Box::new(it) as Box<dyn RollHash>)
+                .collect()
+        }
+    };
+
+    hash_its
+        .iter_mut()
+        .enumerate()
+        .map(|(idx, hash_it)| {
+            let sample_name = if opts.concat_fasta {
+                format!("{}_{}", &opts.name, idx + 1)
+            } else {
+                opts.name.to_string()
+            };
+            if hash_it.seq_len() == 0 {
+                panic!("{sample_name} has no valid sequence");
+            }
+            // Run the sketching
+            Sketch::new(&mut **hash_it, &sample_name, &opts.k_vals, opts.sketch_size, opts.add_rc, opts.min_count)
+        })
+        .collect::<Vec<Sketch>>()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 /// Main function to create sketches from a set of input files, which is parallelised
 /// over the input files
 pub fn sketch_files(
@@ -304,9 +495,7 @@ pub fn sketch_files(
     } else {
         None
     };
-    #[cfg(not(feature = "3di"))]
-    let struct_strings: Option<Vec<String>> = None;
-
+    #[cfg(feature = "3di")]
     log::trace!("{struct_strings:?}");
 
     // Open output file
@@ -327,51 +516,57 @@ pub fn sketch_files(
                 .par_iter()
                 .progress_with(progress_bar)
                 .enumerate()
-                .map(|(idx, (name, fastxvec))| {
+                .map(|(_idx, (name, fastxvec))| {
                     // Read in sequence and set up rolling hash by alphabet type
-                    let mut hash_its: Vec<Box<dyn RollHash>> = match seq_type {
-                        HashType::DNA => NtHashIterator::new(fastxvec, k[0], rc, min_qual)
-                            .into_iter()
-                            .map(|it| Box::new(it) as Box<dyn RollHash>)
-                            .collect(),
-                        HashType::AA(level) => {
-                            AaHashIterator::new(fastxvec, level.clone(), concat_fasta)
-                                .into_iter()
-                                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                .collect()
-                        }
-                        HashType::PDB => {
-                            if let Some(di) = &struct_strings {
-                                log::trace!("Length of string: {}", di.len());
-                                AaHashIterator::from_3di_string(di[idx].clone()) // TODO: clone is not ideal
-                                    .into_iter()
-                                    .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                    .collect()
-                            } else {
-                                AaHashIterator::from_3di_file(fastxvec)
-                                    .into_iter()
-                                    .map(|it| Box::new(it) as Box<dyn RollHash>)
-                                    .collect()
+
+                    let reads = if seq_type == &HashType::DNA {
+                        // Check if we're working with reads, and initalise the filter if so
+                        let mut reader_peek = parse_fastx_file(fastxvec[0].clone())
+                            .unwrap_or_else(|_| panic!("Invalid path/file: {}", fastxvec[0]));
+                        let seq_peek = reader_peek
+                            .next()
+                            .expect("Invalid FASTA/Q record")
+                            .expect("Invalid FASTA/Q record");
+                        let mut reads = false;
+                        if seq_peek.format() == Format::Fastq {
+                            reads = true;
+                            if fastxvec.len() > 2 {
+                                panic!("Input files are reads, but there are more than two input files");
                             }
                         }
+                        reads
+                    } else {
+                        false
                     };
 
-                    hash_its
-                        .iter_mut()
-                        .enumerate()
-                        .map(|(idx, hash_it)| {
-                            let sample_name = if concat_fasta {
-                                format!("{name}_{}", idx + 1)
-                            } else {
-                                name.to_string()
-                            };
-                            if hash_it.seq_len() == 0 {
-                                panic!("{sample_name} has no valid sequence");
-                            }
-                            // Run the sketching
-                            Sketch::new(&mut **hash_it, &sample_name, k, sketch_size, rc, min_count)
-                        })
-                        .collect::<Vec<Sketch>>()
+                    let opts = SketchingOpts {
+                        name: name.clone(),
+                        k_vals: k.to_vec(),
+                        seq_type: seq_type.clone(),
+                        is_reads: reads,
+                        concat_fasta,
+                        sketch_size,
+                        add_rc: rc,
+                        min_count,
+                        min_qual,
+                    };
+
+                    let mut records_readers = fastxvec.iter().map(|file| {
+                        let reader = parse_fastx_file(file).unwrap_or_else(|_| panic!("Invalid path/file: {file}"));
+                        NeedletailIterator::new(reader)
+                    }).collect::<Vec<NeedletailIterator>>();
+
+                    #[cfg(feature = "3di")]
+                    let di = struct_strings.as_ref().map(|structs| structs[_idx].clone());
+
+                    sketch_data(
+                        &mut records_readers,
+                        opts,
+                        #[cfg(feature = "3di")]
+                        convert_pdb,
+                        #[cfg(feature = "3di")]
+                        di,
+                    )
                 })
                 .for_each_with(tx, |tx, sketch| {
                     // Emit the sketch results to the writer thread

@@ -1,6 +1,4 @@
 //! Functions to support `ntHash` generation over sequences
-#[cfg(not(target_arch = "wasm32"))]
-use needletail::{parse_fastx_file, parser::Format};
 
 #[cfg(target_arch = "wasm32")]
 use crate::fastx_wasm::{open_fasta, open_fastq};
@@ -91,21 +89,13 @@ impl RollHash for NtHashIterator {
 impl NtHashIterator {
     #[cfg(not(target_arch = "wasm32"))]
     /// Creates a new ntHash iterator, by loading DNA sequences into memory
-    pub fn new(files: &[String], k: usize, rc: bool, min_qual: u8) -> Vec<Self> {
-        // Check if we're working with reads, and initalise the filter if so
-        let mut reader_peek = parse_fastx_file(files[0].clone())
-            .unwrap_or_else(|_| panic!("Invalid path/file: {}", files[0]));
-        let seq_peek = reader_peek
-            .next()
-            .expect("Invalid FASTA/Q record")
-            .expect("Invalid FASTA/Q record");
-        let mut reads = false;
-        if seq_peek.format() == Format::Fastq {
-            reads = true;
-            if files.len() > 2 {
-                panic!("Input files are reads, but there are more than two input files");
-            }
-        }
+    pub fn new<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+        files: &mut [I],
+        k: usize,
+        rc: bool,
+        min_qual: u8,
+        reads: bool,
+    ) -> Vec<Self> {
 
         let mut seq = Vec::new();
         let mut offsets = Vec::new();
@@ -114,7 +104,7 @@ impl NtHashIterator {
 
         // Read sequence into memory (as we go through multiple times)
         log::debug!("Preprocessing sequence");
-        for file in files.iter() {
+        for file in files.iter_mut() {
             Self::add_dna_seq(
                 file,
                 min_qual,
@@ -202,28 +192,26 @@ impl NtHashIterator {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn add_dna_seq(
-        filename: &str,
+    fn add_dna_seq<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+        records: &mut I,
         min_qual: u8,
         seq: &mut Vec<u8>,
         offsets: &mut Vec<usize>,
         acgt: &mut [usize; 4],
         non_acgt: &mut usize,
     ) {
-        let mut reader =
-            parse_fastx_file(filename).unwrap_or_else(|_| panic!("Invalid path/file: {filename}"));
 
         // Current byte
         let mut b = 0;
         // Nucleotide index within byte 0-3
         let mut i = 0;
 
-        while let Some(record) = reader.next() {
-            let seqrec = record.expect("Invalid FASTA/Q record");
-
-            for (base_idx, base) in seqrec.seq().iter().enumerate() {
-                if valid_base(*base) && seqrec.qual().is_none_or(|q| q[base_idx] >= min_qual) {
-                    let encoded_base = encode_base(*base);
+        for record in records {
+            let bases_iter = record.0.into_iter();
+            let qual = record.1;
+            for (base_idx, base) in bases_iter.enumerate() {
+                if valid_base(base) && qual.as_ref().is_none_or(|q| q[base_idx] >= min_qual) {
+                    let encoded_base = encode_base(base);
                     acgt[encoded_base as usize] += 1;
                     b |= encoded_base;
                     i += 1;

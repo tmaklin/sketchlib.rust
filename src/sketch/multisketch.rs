@@ -76,6 +76,48 @@ impl MultiSketch {
         }
     }
 
+    /// Create a new container for a `Vec<Sketch>`, emptying the Vec.
+    ///
+    /// Saves the data
+    pub fn from_sketches(
+        sketches: &mut Vec<Sketch>,
+        sketch_size: u64,
+        kmer_lengths: &[usize],
+        hash_type: HashType,
+    ) -> Self {
+        for (idx, sketch) in sketches.iter_mut().enumerate() {
+            sketch.set_index(idx);
+        }
+
+        let mut name_map = HashMap::with_capacity(sketches.len());
+        for sketch in sketches.iter() {
+            name_map.insert(sketch.name().to_string(), sketch.get_index());
+        }
+
+        debug_assert!(sketch_size.is_multiple_of(u64::BITS as u64));
+        let (sketchsize64, _signs_size, usigs_size) = num_bins(sketch_size);
+        let kmer_stride = usigs_size as usize;
+
+        let sketch_bins = sketches.iter_mut().flat_map(|sketch| {
+            sketch.get_usigs()
+        }).collect();
+
+        Self {
+            sketch_size,
+            sketchsize64,
+            kmer_lengths: kmer_lengths.to_vec(),
+            sketch_metadata: std::mem::take(sketches),
+            name_map,
+            block_reindex: None,
+            sketch_bins,
+            bin_stride: 1,
+            kmer_stride,
+            sample_stride: kmer_stride * kmer_lengths.len(),
+            sketch_version: env!("CARGO_PKG_VERSION").to_string(),
+            hash_type,
+        }
+    }
+
     /// Saves the metadata (.skm)
     pub fn save_metadata(&self, file_prefix: &str) -> Result<(), Error> {
         let filename = format!("{file_prefix}.skm");
