@@ -6,10 +6,10 @@ use crate::common::*;
 #[cfg(test)]
 
 mod tests {
+    use approx::assert_abs_diff_eq;
     use sketchlib::sketch::{
         multisketch::MultiSketch, sketch_datafile::SketchArrayReader, BIN_BITS,
     };
-    use approx::assert_abs_diff_eq;
     use snapbox::assert_data_eq;
 
     use super::*;
@@ -36,13 +36,14 @@ mod tests {
                 let expected_fields: Vec<&str> = expected_line.split('\t').collect();
                 actual_fields.len() == expected_fields.len()
                     && actual_fields.iter().zip(expected_fields.iter()).all(
-                        |(actual_field, expected_field)| {
-                            match (actual_field.parse::<f64>(), expected_field.parse::<f64>()) {
-                                (Ok(actual_val), Ok(expected_val)) => {
-                                    (actual_val - expected_val).abs() < 1e-4
-                                }
-                                _ => actual_field == expected_field,
+                        |(actual_field, expected_field)| match (
+                            actual_field.parse::<f64>(),
+                            expected_field.parse::<f64>(),
+                        ) {
+                            (Ok(actual_val), Ok(expected_val)) => {
+                                (actual_val - expected_val).abs() < 1e-4
                             }
+                            _ => actual_field == expected_field,
                         },
                     )
             });
@@ -142,10 +143,9 @@ mod tests {
             .assert()
             .success();
 
-        let mut standard_sketches =
-            MultiSketch::load_metadata(&sandbox.file_string("standard", TestDir::Output))
-                .expect("failed to load standard sketch metadata");
-        standard_sketches.read_sketch_data(&sandbox.file_string("standard", TestDir::Output));
+        let standard_sketches =
+            MultiSketch::load(&sandbox.file_string("standard", TestDir::Output))
+                .expect("failed to load standard sketch data");
 
         let sketch_size = standard_sketches.sketch_size as usize;
         assert_eq!(sketch_size, 64);

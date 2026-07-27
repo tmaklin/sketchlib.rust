@@ -164,6 +164,25 @@ impl<'a> DistanceMatrix<'a> {
     pub fn dists_mut(&mut self) -> &mut Vec<f32> {
         &mut self.distances
     }
+
+    /// Iterates over the distances as `(primary, accessory)` pairs.
+    ///
+    /// The second element is `Some` only for [`DistType::CoreAcc`] matrices
+    /// (interleaved core/accessory pairs written by `self_dists_all`/`cross_dists_all`);
+    /// `None` for Jaccard/ANI matrices, where each entry is a single value. Iteration
+    /// order matches the row-major order used by `Display` (ref-outer, query- or
+    /// ref-inner — see `self_dists_all`/`cross_dists_all` docs).
+    pub fn dists_iter(&self) -> Box<dyn Iterator<Item = (f32, Option<f32>)> + '_> {
+        if self.jaccard == DistType::CoreAcc {
+            Box::new(
+                self.distances
+                    .chunks_exact(2)
+                    .map(|pair| (pair[0], Some(pair[1]))),
+            )
+        } else {
+            Box::new(self.distances.iter().copied().map(|d| (d, None)))
+        }
+    }
 }
 
 impl<'a> Distances<'a> for DistanceMatrix<'a> {

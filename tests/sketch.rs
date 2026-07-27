@@ -155,4 +155,45 @@ mod tests {
             "Unexpected error loading legacy sketch: {err}"
         );
     }
+
+    #[test]
+    fn load_matches_load_metadata_then_read_sketch_data() {
+        use sketchlib::sketch::multisketch::MultiSketch;
+        let sandbox = TestSetup::setup();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .arg("-o")
+            .arg("loadtest")
+            .args(["-k", "31"])
+            .arg(sandbox.file_string("14412_3#82.contigs_velvet.fa.gz", TestDir::Input))
+            .arg(sandbox.file_string("14412_3#84.contigs_velvet.fa.gz", TestDir::Input))
+            .assert()
+            .success();
+
+        let prefix = sandbox.file_string("loadtest", TestDir::Output);
+
+        let mut separate =
+            MultiSketch::load_metadata(&prefix).expect("failed to load metadata separately");
+        separate.read_sketch_data(&prefix);
+
+        let combined = MultiSketch::load(&prefix).expect("failed to load combined");
+
+        assert_eq!(
+            separate, combined,
+            "MultiSketch::load should match load_metadata + read_sketch_data"
+        );
+
+        // sketch_metadata() should expose the same names as the indexed accessors
+        let names: Vec<&str> = combined
+            .sketch_metadata()
+            .iter()
+            .map(|s| s.name())
+            .collect();
+        assert_eq!(names.len(), combined.number_samples_loaded());
+        for (idx, name) in names.iter().enumerate() {
+            assert_eq!(*name, combined.sketch_name(idx));
+        }
+    }
 }

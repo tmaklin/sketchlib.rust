@@ -25,7 +25,11 @@ pub const MIN_SKETCH_VERSION: (u64, u64, u64) = (0, 4, 0);
 /// missing or malformed (which covers files predating the `sketch_version` field).
 pub fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     let mut parts = version.split('.').map(str::parse::<u64>);
-    Some((parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?))
+    Some((
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    ))
 }
 
 /// A set of sketch files, with underlying storage as .skd/.skm
@@ -174,6 +178,13 @@ impl MultiSketch {
         Ok(skm_obj)
     }
 
+    /// Loads both metadata (.skm) and sketch data (.skd)
+    pub fn load(file_prefix: &str) -> Result<Self, Error> {
+        let mut multisketch = Self::load_metadata(file_prefix)?;
+        multisketch.read_sketch_data(file_prefix);
+        Ok(multisketch)
+    }
+
     /// Number of samples loaded from the .skm/.skd
     pub fn number_samples_loaded(&self) -> usize {
         match &self.block_reindex {
@@ -200,6 +211,11 @@ impl MultiSketch {
     /// Type of sequence sketched
     pub fn get_hash_type(&self) -> &HashType {
         &self.hash_type
+    }
+
+    /// The stored metadata for each loaded sketch
+    pub fn sketch_metadata(&self) -> &[Sketch] {
+        &self.sketch_metadata
     }
 
     /// Returns the name of the sample at the given index.

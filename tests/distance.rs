@@ -44,9 +44,7 @@ mod tests {
                 expected_fields.len(),
                 "Field count mismatch. Actual: {actual_line}, Expected: {expected_line}"
             );
-            for (actual_field, expected_field) in
-                actual_fields.iter().zip(expected_fields.iter())
-            {
+            for (actual_field, expected_field) in actual_fields.iter().zip(expected_fields.iter()) {
                 match (actual_field.parse::<f64>(), expected_field.parse::<f64>()) {
                     (Ok(actual_val), Ok(expected_val)) => {
                         assert_abs_diff_eq!(actual_val, expected_val, epsilon = 1e-4);
@@ -795,5 +793,78 @@ mod tests {
             &String::from_utf8(subset_output.stdout).unwrap(),
             &sandbox.snapbox_file("dists_subset.stdout", TestDir::Correct),
         );
+    }
+
+    /// Helper: parse `DistanceMatrix`'s `Display`/TSV output into (primary, accessory) pairs.
+    fn parse_display_pairs(display: &str, core_acc: bool) -> Vec<(f64, Option<f64>)> {
+        display
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                let primary = fields[2].parse().expect("Could not parse distance");
+                if core_acc {
+                    let accessory = fields[3].parse().expect("Could not parse accessory dist");
+                    (primary, Some(accessory))
+                } else {
+                    (primary, None)
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dists_iter_matches_display() {
+        use sketchlib::distances::{self_dists_all, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        sandbox.copy_input_file_to_wd("14412_3#82.contigs_velvet.fa.gz");
+        sandbox.copy_input_file_to_wd("14412_3#84.contigs_velvet.fa.gz");
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        sandbox.copy_input_file_to_wd("TIGR4.fa.gz");
+        sandbox.copy_input_file_to_wd("rfile.txt");
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .arg("-o")
+            .arg("iter_db")
+            .args(["-v", "--k-seq", "17,31,4", "-s", "1000"])
+            .arg("-f")
+            .arg("rfile.txt")
+            .assert()
+            .success();
+
+        let sketches = MultiSketch::load(&sandbox.file_string("iter_db", TestDir::Output))
+            .expect("failed to load sketches");
+        let n = sketches.number_samples_loaded();
+
+        // CoreAcc matrix (multi-k, no -k given): dists_iter should yield Some(accessory)
+        let core_acc_type = set_k(&sketches, None, false).expect("set_k failed");
+        let core_acc_matrix = self_dists_all(&sketches, n, core_acc_type, true, None, 0.0);
+        let display_pairs = parse_display_pairs(&core_acc_matrix.to_string(), true);
+        let iter_pairs: Vec<(f32, Option<f32>)> = core_acc_matrix.dists_iter().collect();
+        assert_eq!(display_pairs.len(), iter_pairs.len());
+        for ((core, accessory), (iter_core, iter_accessory)) in
+            display_pairs.iter().zip(iter_pairs.iter())
+        {
+            assert_abs_diff_eq!(*core, *iter_core as f64, epsilon = 1e-4);
+            let iter_accessory = iter_accessory.expect("dists_iter should yield Some for CoreAcc");
+            assert_abs_diff_eq!(accessory.expect("Some in CoreAcc"), iter_accessory as f64, epsilon = 1e-4);
+        }
+
+        // Jaccard matrix (-k given): dists_iter should yield None
+        let jaccard_type = set_k(&sketches, Some(17), false).expect("set_k failed");
+        let jaccard_matrix = self_dists_all(&sketches, n, jaccard_type, true, None, 0.0);
+        let display_pairs = parse_display_pairs(&jaccard_matrix.to_string(), false);
+        let iter_pairs: Vec<(f32, Option<f32>)> = jaccard_matrix.dists_iter().collect();
+        assert_eq!(display_pairs.len(), iter_pairs.len());
+        for ((dist, _), (iter_dist, iter_accessory)) in
+            display_pairs.iter().zip(iter_pairs.iter())
+        {
+            assert_abs_diff_eq!(*dist, *iter_dist as f64, epsilon = 1e-4);
+            assert!(iter_accessory.is_none());
+        }
     }
 }

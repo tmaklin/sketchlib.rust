@@ -101,4 +101,46 @@ mod tests {
             "Concat sketch data does not match"
         );
     }
+
+    #[test]
+    fn save_sketch_data_reexport_matches_utils() {
+        let sandbox = TestSetup::setup();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(&["--k-vals", "17"])
+            .arg(sandbox.file_string("14412_3#82.contigs_velvet.fa.gz", TestDir::Input))
+            .arg("--quiet")
+            .args(&["-o", "reexport_part1"])
+            .assert()
+            .success();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(&["--k-vals", "17"])
+            .arg(sandbox.file_string("14412_3#84.contigs_velvet.fa.gz", TestDir::Input))
+            .arg("--quiet")
+            .args(&["-o", "reexport_part2"])
+            .assert()
+            .success();
+
+        let part1 = sandbox.file_string("reexport_part1", TestDir::Output);
+        let part2 = sandbox.file_string("reexport_part2", TestDir::Output);
+        let via_reexport = sandbox.file_string("via_reexport", TestDir::Output);
+        let via_utils = sandbox.file_string("via_utils", TestDir::Output);
+
+        sketchlib::save_sketch_data(&part1, &part2, &via_reexport)
+            .expect("save_sketch_data (re-export) failed");
+        sketchlib::utils::save_sketch_data(&part1, &part2, &via_utils)
+            .expect("utils::save_sketch_data failed");
+
+        let predicate_file = predicate::path::eq_file(Path::new(&format!("{via_utils}.skd")));
+        assert_eq!(
+            true,
+            predicate_file.eval(Path::new(&format!("{via_reexport}.skd"))),
+            "Re-exported save_sketch_data output does not match utils::save_sketch_data"
+        );
+    }
 }

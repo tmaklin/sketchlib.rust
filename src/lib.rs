@@ -9,7 +9,7 @@
 //!   above these distances is unsupported and may lead to poor estimation of distances
 //!   without clear warning.
 //! - Short k-mer lengths are likely to match at random, see [PopPUNK's docs](https://poppunk-docs.bacpop.org/sketching.html#choosing-the-right-k-mer-lengths)
-//!   for information on how to select good lengths. 
+//!   for information on how to select good lengths.
 //! - ANI distance resolution is highly affected by sketch size at higher mismatch
 //!   levels, so note that if you see lots of samples at around 80% they may be much lower than
 //!   this. We recommend checking the Jaccard values in this case, if they are close to 0
@@ -200,6 +200,7 @@ pub mod utils;
 use crate::utils::get_progress_bar;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::strip_sketch_extension;
+pub use utils::save_sketch_data;
 
 #[cfg(target_arch = "wasm32")]
 pub mod fastx_wasm;
@@ -258,8 +259,7 @@ pub fn main() -> Result<(), Error> {
                 panic!("--concat-fasta currently only supported with --seq-type aa");
             }
 
-            // An extra thread is needed for the writer. This doesn't 'overuse' CPU
-            check_and_set_threads(*threads + 1);
+            set_threads_with_writer(*threads);
 
             // Read input
             log::info!("Getting input files");
@@ -343,11 +343,9 @@ pub fn main() -> Result<(), Error> {
 
             // Read queries if supplied. Note no subsetting here
             let queries = if let Some(query_db_name) = query_db {
-                let mut queries = MultiSketch::load_metadata(query_db_name).unwrap_or_else(|_| {
-                    panic!("Could not read sketch metadata from {query_db_name}.skm")
-                });
-                log::info!("Loading query sketch data from {query_db_name}.skd");
-                queries.read_sketch_data(query_db_name);
+                log::info!("Loading query sketches from {query_db_name}.skm/.skd");
+                let queries = MultiSketch::load(query_db_name)
+                    .unwrap_or_else(|_| panic!("Could not read sketch data from {query_db_name}"));
                 log::info!("Read query sketches:\n{queries:?}");
                 Some(queries)
             } else {
@@ -499,8 +497,7 @@ pub fn main() -> Result<(), Error> {
                 sketch_size,
                 kmer_length,
             } => {
-                // An extra thread is needed for the writer
-                check_and_set_threads(*threads + 1);
+                set_threads_with_writer(*threads);
 
                 // Get input files
                 log::info!("Getting input files");
@@ -616,7 +613,7 @@ pub fn main() -> Result<(), Error> {
                 log::info!("Parsed {} samples in input query list", input_files.len());
 
                 log::info!("Sketching input queries");
-                check_and_set_threads(*threads + 1); // Writer thread
+                set_threads_with_writer(*threads); // Writer thread
                 let (queries, query_names) =
                     inverted_index.sketch_queries(&input_files, *min_count, *min_qual, args.quiet);
 
@@ -732,12 +729,10 @@ pub fn main() -> Result<(), Error> {
 
                     // Load the .skd/.skm
                     let ref_db_name = utils::strip_sketch_extension(ref_db_input);
-                    let mut references =
-                        MultiSketch::load_metadata(ref_db_name).unwrap_or_else(|_| {
-                            panic!("Could not read sketch metadata from {ref_db_name}.skm")
-                        });
-                    log::info!("Loading sketch data from {ref_db_name}.skd");
-                    references.read_sketch_data(ref_db_name);
+                    log::info!("Loading reference sketches from {ref_db_name}.skm/.skd");
+                    let references = MultiSketch::load(ref_db_name).unwrap_or_else(|_| {
+                        panic!("Could not read sketch data from {ref_db_name}")
+                    });
                     log::info!("Read reference sketches:\n{references:?}");
                     let n = references.number_samples_loaded();
                     if knn >= n {
@@ -805,8 +800,7 @@ pub fn main() -> Result<(), Error> {
             threads,
             level,
         } => {
-            // An extra thread is needed for the writer. This doesn't 'overuse' CPU
-            check_and_set_threads(*threads + 1);
+            set_threads_with_writer(*threads);
             //get input files
             log::info!("Getting input files");
             let input_files: Vec<(String, Vec<String>)> = get_input_list(file_list, seq_files);
