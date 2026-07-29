@@ -187,13 +187,13 @@ pub fn parse_kmers(k: &Kmers) -> Vec<usize> {
 /// Set a buffered stream to write to.
 ///
 /// Either a file (if [`Some`]) or stdout otherwise (if [`None`]).
-pub fn set_ostream(oprefix: &Option<String>) -> BufWriter<Box<dyn Write>> {
+pub fn set_ostream(oprefix: &Option<String>) -> BufWriter<Box<dyn Write + Send>> {
     let out_writer = match oprefix {
         Some(prefix) => {
             let path = Path::new(prefix);
-            Box::new(File::create(path).unwrap()) as Box<dyn Write>
+            Box::new(File::create(path).unwrap()) as Box<dyn Write + Send>
         }
-        None => Box::new(stdout()) as Box<dyn Write>,
+        None => Box::new(stdout()) as Box<dyn Write + Send>,
     };
     BufWriter::new(out_writer)
 }

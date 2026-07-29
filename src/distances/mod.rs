@@ -1,5 +1,8 @@
 //! Functions to calculate distances between sample sets
 use std::collections::BinaryHeap;
+use std::fmt::Write as FmtWrite;
+use std::io::Write as IoWrite;
+use std::sync::mpsc;
 
 use anyhow::{Context, Error};
 use hashbrown::HashMap;
@@ -131,6 +134,107 @@ pub fn self_dists_all<'a>(
             }
         });
     distances
+}
+
+/// Self query mode (dense, all distances), streaming text output directly to `writer`
+/// instead of materializing a [`DistanceMatrix`]. This keeps peak memory bounded
+/// (independent of `n`) for large all-vs-all comparisons.
+///
+/// Line format matches [`DistanceMatrix`]'s `Display` impl exactly, but pair order is
+/// not guaranteed to match it (chunks may be written as they complete, from whichever
+/// thread finishes first) — every pair is still written exactly once.
+pub fn self_dists_all_stream<W: IoWrite + Send>(
+    writer: &mut W,
+    sketches: &MultiSketch,
+    n: usize,
+    dist_type: DistType,
+    quiet: bool,
+    completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+    threads: usize,
+) -> Result<(), Error> {
+    let ani = matches!(dist_type, DistType::Jaccard(_, _, true));
+    let k_vals = match dist_type {
+        DistType::Jaccard(k_idx, k_val, _) => Some((k_idx, k_val)),
+        DistType::CoreAcc => None,
+    };
+    let ref_names = <DistanceMatrix as Distances>::sketch_names(sketches);
+
+    let n_distances = n * (n - 1) / 2;
+    let n_chunks = n_distances.div_ceil(CHUNK_SIZE);
+    let progress_bar = get_progress_bar(n_chunks, BAR_PERCENT, quiet);
+
+    // Bounded channel: caps in-flight chunk memory at a small constant regardless of
+    // n, rather than relying on producer/writer speeds happening to balance out.
+    let channel_bound = threads.max(1) * 2;
+    let (tx, rx) = mpsc::sync_channel::<String>(channel_bound);
+
+    rayon::scope(|s| -> Result<(), Error> {
+        s.spawn(move |_| {
+            (0..n_chunks)
+                .into_par_iter()
+                .progress_with(progress_bar)
+                .for_each_with(tx, |tx, chunk_idx| {
+                    let start = chunk_idx * CHUNK_SIZE;
+                    let end = (start + CHUNK_SIZE).min(n_distances);
+                    let mut i = calc_row_idx(start, n);
+                    let mut j = calc_col_idx(start, i, n);
+                    let mut buf = String::with_capacity((end - start) * 24);
+
+                    for _ in start..end {
+                        if let Some((k_idx, k_f64)) = k_vals {
+                            let c1 = completeness_vec.map(|cv| cv[i]);
+                            let c2 = completeness_vec.map(|cv| cv[j]);
+                            let j_index = jaccard_index(
+                                sketches.get_sketch_slice(i, k_idx),
+                                sketches.get_sketch_slice(j, k_idx),
+                                sketches.sketchsize64,
+                                c1,
+                                c2,
+                                completeness_cutoff,
+                            );
+                            let dist = if ani {
+                                ani_pois(j_index, k_f64) as f32
+                            } else {
+                                (1.0_f64 - j_index) as f32
+                            };
+                            let _ =
+                                writeln!(buf, "{}\t{}\t{dist}", ref_names[i], ref_names[j]);
+                        } else {
+                            let d = core_acc_dist(
+                                sketches,
+                                sketches,
+                                i,
+                                j,
+                                completeness_vec,
+                                completeness_vec,
+                                completeness_cutoff,
+                            );
+                            let _ = writeln!(
+                                buf,
+                                "{}\t{}\t{}\t{}",
+                                ref_names[i], ref_names[j], d.0, d.1
+                            );
+                        }
+
+                        // Move to next index in upper triangle
+                        j += 1;
+                        if j >= n {
+                            i += 1;
+                            j = i + 1;
+                        }
+                    }
+                    let _ = tx.send(buf);
+                });
+        });
+
+        for chunk_text in rx {
+            writer
+                .write_all(chunk_text.as_bytes())
+                .context("Error writing streamed distance output")?;
+        }
+        Ok(())
+    })
 }
 
 /// Self query mode (dense, all distances)
@@ -303,6 +407,106 @@ pub fn cross_dists_all<'a>(
             }
         });
     distances
+}
+
+/// Cross-query mode (dense, all distances), streaming variant of [`cross_dists_all`].
+/// Same ordering/format contract as [`self_dists_all_stream`].
+pub fn cross_dists_all_stream<W: IoWrite + Send>(
+    writer: &mut W,
+    ref_sketches: &MultiSketch,
+    query_sketches: &MultiSketch,
+    n: usize,
+    n_query: usize,
+    dist_type: DistType,
+    quiet: bool,
+    ref_completeness_vec: Option<&Vec<f64>>,
+    query_completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+    threads: usize,
+) -> Result<(), Error> {
+    let ani = matches!(dist_type, DistType::Jaccard(_, _, true));
+    let k_vals = match dist_type {
+        DistType::Jaccard(k_idx, k_val, _) => Some((k_idx, k_val)),
+        DistType::CoreAcc => None,
+    };
+    let ref_names = <DistanceMatrix as Distances>::sketch_names(ref_sketches);
+    let query_names = <DistanceMatrix as Distances>::sketch_names(query_sketches);
+
+    let n_distances = n * n_query;
+    let n_chunks = n_distances.div_ceil(CHUNK_SIZE);
+    let progress_bar = get_progress_bar(n_chunks, BAR_PERCENT, quiet);
+
+    let channel_bound = threads.max(1) * 2;
+    let (tx, rx) = mpsc::sync_channel::<String>(channel_bound);
+
+    rayon::scope(|s| -> Result<(), Error> {
+        s.spawn(move |_| {
+            (0..n_chunks)
+                .into_par_iter()
+                .progress_with(progress_bar)
+                .for_each_with(tx, |tx, chunk_idx| {
+                    let start = chunk_idx * CHUNK_SIZE;
+                    let end = (start + CHUNK_SIZE).min(n_distances);
+                    let (mut i, mut j) = calc_query_indices(start, n_query);
+                    let mut buf = String::with_capacity((end - start) * 24);
+
+                    for _ in start..end {
+                        if let Some((k_idx, k_f64)) = k_vals {
+                            let c1 = ref_completeness_vec.map(|cv| cv[i]);
+                            let c2 = query_completeness_vec.map(|cv| cv[j]);
+                            let j_index = jaccard_index(
+                                ref_sketches.get_sketch_slice(i, k_idx),
+                                query_sketches.get_sketch_slice(j, k_idx),
+                                ref_sketches.sketchsize64,
+                                c1,
+                                c2,
+                                completeness_cutoff,
+                            );
+                            let dist = if ani {
+                                ani_pois(j_index, k_f64) as f32
+                            } else {
+                                (1.0_f64 - j_index) as f32
+                            };
+                            let _ = writeln!(
+                                buf,
+                                "{}\t{}\t{dist}",
+                                ref_names[i], query_names[j]
+                            );
+                        } else {
+                            let d = core_acc_dist(
+                                ref_sketches,
+                                query_sketches,
+                                i,
+                                j,
+                                ref_completeness_vec,
+                                query_completeness_vec,
+                                completeness_cutoff,
+                            );
+                            let _ = writeln!(
+                                buf,
+                                "{}\t{}\t{}\t{}",
+                                ref_names[i], query_names[j], d.0, d.1
+                            );
+                        }
+
+                        // Move to next index
+                        j += 1;
+                        if j >= n_query {
+                            i += 1;
+                            j = 0;
+                        }
+                    }
+                    let _ = tx.send(buf);
+                });
+        });
+
+        for chunk_text in rx {
+            writer
+                .write_all(chunk_text.as_bytes())
+                .context("Error writing streamed distance output")?;
+        }
+        Ok(())
+    })
 }
 
 /// Cross-query mode with kNN filtering.
@@ -558,4 +762,131 @@ pub fn self_dists_knn_precluster<'a>(
         }
     }
     sp_distances
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Replays the chunk generation/stepping logic used by `self_dists_all_stream`
+    /// (self/upper-triangle mode), without any sketch data, to verify the index
+    /// arithmetic visits every pair exactly once.
+    fn self_mode_chunk_pairs(n: usize) -> Vec<(usize, usize)> {
+        let n_distances = n * n.saturating_sub(1) / 2;
+        let n_chunks = n_distances.div_ceil(CHUNK_SIZE);
+        let mut pairs = Vec::with_capacity(n_distances);
+        for chunk_idx in 0..n_chunks {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(n_distances);
+            let mut i = calc_row_idx(start, n);
+            let mut j = calc_col_idx(start, i, n);
+            for _ in start..end {
+                pairs.push((i, j));
+                j += 1;
+                if j >= n {
+                    i += 1;
+                    j = i + 1;
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Replays the chunk generation/stepping logic used by `cross_dists_all_stream`
+    /// (rectangular ref-vs-query mode).
+    fn cross_mode_chunk_pairs(n: usize, n_query: usize) -> Vec<(usize, usize)> {
+        let n_distances = n * n_query;
+        let n_chunks = n_distances.div_ceil(CHUNK_SIZE);
+        let mut pairs = Vec::with_capacity(n_distances);
+        for chunk_idx in 0..n_chunks {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(n_distances);
+            let (mut i, mut j) = calc_query_indices(start, n_query);
+            for _ in start..end {
+                pairs.push((i, j));
+                j += 1;
+                if j >= n_query {
+                    i += 1;
+                    j = 0;
+                }
+            }
+        }
+        pairs
+    }
+
+    #[test]
+    fn self_mode_chunk_boundaries_cover_every_pair_once() {
+        // n values chosen to exercise: no pairs, a single pair, small n, and
+        // n_distances landing exactly on / either side of the CHUNK_SIZE (1000)
+        // boundary (n=46 -> 1035 pairs: one full chunk of 1000 + a 35-pair tail).
+        for n in [0usize, 1, 2, 3, 4, 45, 46, 47, 63, 64, 100] {
+            let pairs = self_mode_chunk_pairs(n);
+            let expected_count = n * n.saturating_sub(1) / 2;
+            assert_eq!(pairs.len(), expected_count, "wrong pair count for n={n}");
+
+            let unique: HashSet<_> = pairs.iter().copied().collect();
+            assert_eq!(
+                unique.len(),
+                pairs.len(),
+                "duplicate pair detected for n={n}"
+            );
+
+            for &(i, j) in &pairs {
+                assert!(i < j && j < n, "pair ({i},{j}) out of range for n={n}");
+            }
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    assert!(
+                        unique.contains(&(i, j)),
+                        "missing pair ({i},{j}) for n={n}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cross_mode_chunk_boundaries_cover_every_pair_once() {
+        for (n, n_query) in [
+            (0usize, 0usize),
+            (1, 1),
+            (1, 5),
+            (5, 1),
+            (4, 4),
+            (32, 32),
+            (31, 33),
+            (10, 100),
+        ] {
+            let pairs = cross_mode_chunk_pairs(n, n_query);
+            let expected_count = n * n_query;
+            assert_eq!(
+                pairs.len(),
+                expected_count,
+                "wrong pair count for n={n}, n_query={n_query}"
+            );
+
+            let unique: HashSet<_> = pairs.iter().copied().collect();
+            assert_eq!(
+                unique.len(),
+                pairs.len(),
+                "duplicate pair detected for n={n}, n_query={n_query}"
+            );
+
+            for &(i, j) in &pairs {
+                assert!(
+                    i < n && j < n_query,
+                    "pair ({i},{j}) out of range for n={n}, n_query={n_query}"
+                );
+            }
+            for i in 0..n {
+                for j in 0..n_query {
+                    assert!(
+                        unique.contains(&(i, j)),
+                        "missing pair ({i},{j}) for n={n}, n_query={n_query}"
+                    );
+                }
+            }
+        }
+    }
 }
