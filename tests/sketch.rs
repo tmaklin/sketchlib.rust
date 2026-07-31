@@ -70,6 +70,7 @@ mod tests {
             .assert()
             .stdout_eq(sandbox.snapbox_file("read_sketch_info.stdout", TestDir::Correct));
 
+        // FASTQ read length is estimated from minima normalized over the full u64 hash space.
         Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .arg("info")
@@ -140,39 +141,18 @@ mod tests {
     }
 
     #[test]
-    /// Check that older databases can still be read correctly
-    /// (some fields added on .skm in v0.2.0)
-    fn legacy_databases() {
+    /// The MultiSketch (.skd/.skm) format changed as of v0.4, so databases
+    /// created with older versions (this fixture is v0.1.3) must be refused
+    /// rather than silently loaded.
+    fn legacy_database_rejected() {
         use sketchlib::sketch::multisketch::MultiSketch;
         let sandbox = TestSetup::setup();
-        sandbox.copy_input_file_to_wd("R6.fa.gz");
-        sandbox.copy_input_file_to_wd("TIGR4.fa.gz");
 
-        // Old command:
-        // sketchlib sketch -v -o legacy_db --k-vals 17,21,25 -s 100 R6.fa.gz TIGR4.fa.gz
-
-        Command::new(cmd::cargo_bin!("sketchlib"))
-            .current_dir(sandbox.get_wd())
-            .arg("sketch")
-            .arg("-o")
-            .arg("new_db")
-            .args(["-v", "--k-vals", "17,21,25", "-s", "100"])
-            .arg("R6.fa.gz")
-            .arg("TIGR4.fa.gz")
-            .assert()
-            .success();
-
-        // Check .skm the same
-        let new_sketch: MultiSketch =
-            MultiSketch::load_metadata(&sandbox.file_string("new_db", TestDir::Output))
-                .expect("Failed to load new sketch");
-        let expected_sketch =
-            MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
-                .expect("Failed to load legacy sketch");
-
-        assert_eq!(
-            new_sketch, expected_sketch,
-            "Sketch metadata does not match legacy and new version"
+        let err = MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect_err("Loading a pre-v0.4 sketch file should fail");
+        assert!(
+            err.to_string().contains("Incompatible sketch file version"),
+            "Unexpected error loading legacy sketch: {err}"
         );
     }
 }

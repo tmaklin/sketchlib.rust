@@ -15,8 +15,11 @@ This is a reimplementation and extension of [pp-sketchlib](https://github.com/ba
 in the rust language. This version is optimised for larger sample numbers, particularly
 allowing subsets of samples to be compared.
 
-v0.2.0 is the first stable release. We intend to keep the file format unchanged after this
-point so sketch libraries will not need to be rebuilt.
+### News
+
+- **Data format changed in v0.4.0**. If you have an older database (see `sketchlib info <db_prefix> | grep "sketch_version"`)
+you should resketch samples with >v0.4. Otherwise you will need to use an older release available on crates.io.
+- v0.2.0 was the first stable release.
 
 ## Documentation
 

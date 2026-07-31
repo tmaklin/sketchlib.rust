@@ -359,8 +359,7 @@ pub fn cross_dists_knn<'a>(
                     if ani {
                         heap.into_sorted_vec().iter().zip(row_dist_slice).for_each(
                             |(inverse_ani, output_ani)| {
-                                *output_ani =
-                                    SparseJaccard(inverse_ani.0, 1.0_f32 - inverse_ani.1);
+                                *output_ani = SparseJaccard(inverse_ani.0, 1.0_f32 - inverse_ani.1);
                             },
                         );
                     } else {

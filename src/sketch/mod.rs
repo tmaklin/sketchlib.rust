@@ -4,6 +4,7 @@ use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 
+use aligned_vec::{AVec, ConstAlign};
 #[cfg(not(target_arch = "wasm32"))]
 use indicatif::ParallelProgressIterator;
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,9 +39,26 @@ pub mod sketch_datafile;
 use self::sketch_datafile::SketchArrayWriter;
 
 /// Bin bits (lowest of 64-bits to keep)
-pub const BBITS: u64 = 14;
-/// Total width of all bins (used as sign % sign_mod)
-pub const SIGN_MOD: u64 = (1 << 61) - 1;
+pub const BIN_BITS: usize = 16;
+/// Byte alignment used for bit-packed sketch buffers.
+pub const SKETCH_ALIGNMENT: usize = 64;
+
+/// Aligned storage for bit-packed sketch buffers.
+pub type SketchVec = AVec<u64, ConstAlign<SKETCH_ALIGNMENT>>;
+
+pub(crate) fn aligned_sketch_vec() -> SketchVec {
+    SketchVec::new(SKETCH_ALIGNMENT)
+}
+
+pub(crate) fn aligned_sketch_vec_with_capacity(capacity: usize) -> SketchVec {
+    SketchVec::with_capacity(SKETCH_ALIGNMENT, capacity)
+}
+
+pub(crate) fn aligned_sketch_vec_filled(len: usize, value: u64) -> SketchVec {
+    let mut vec = aligned_sketch_vec_with_capacity(len);
+    vec.resize(len, value);
+    vec
+}
 
 /// Get the number of elements in the sketch vectors for a given sketch size
 ///
@@ -56,7 +74,7 @@ pub const SIGN_MOD: u64 = (1 << 61) - 1;
 pub fn num_bins(sketch_size: u64) -> (u64, u64, u64) {
     let sketchsize64 = sketch_size.div_ceil(u64::BITS as u64);
     let signs_size = sketchsize64 * (u64::BITS as u64);
-    let usigs_size = sketchsize64 * BBITS;
+    let usigs_size = sketchsize64 * (BIN_BITS as u64);
     (sketchsize64, signs_size, usigs_size)
 }
 
@@ -101,10 +119,10 @@ impl Default for SketchingOpts {
 }
 
 /// A single sample's sketch
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Sketch {
-    #[serde(skip)]
-    usigs: Vec<u64>,
+    #[serde(skip, default = "aligned_sketch_vec")]
+    usigs: SketchVec,
     name: String,
     index: Option<usize>,
     rc: bool,
@@ -113,6 +131,22 @@ pub struct Sketch {
     densified: bool,
     acgt: [usize; 4],
     non_acgt: usize,
+}
+
+impl Default for Sketch {
+    fn default() -> Self {
+        Self {
+            usigs: aligned_sketch_vec(),
+            name: String::default(),
+            index: None,
+            rc: false,
+            reads: false,
+            seq_length: 0,
+            densified: false,
+            acgt: [0; 4],
+            non_acgt: 0,
+        }
+    }
 }
 
 // TODO: should this take hash_it and filter as input?
@@ -128,7 +162,7 @@ impl Sketch {
     ) -> Self {
         let (_sketchsize64, num_bins, usigs_size) = num_bins(sketch_size);
         let flattened_size_u64 = usigs_size as usize * kmer_lengths.len();
-        let mut usigs = Vec::with_capacity(flattened_size_u64);
+        let mut usigs = aligned_sketch_vec_with_capacity(flattened_size_u64);
 
         let mut read_filter = if seq_hashes.reads() {
             let mut filter = KmerFilter::new(min_count);
@@ -145,11 +179,11 @@ impl Sketch {
             log::debug!("Running sketching at k={k}");
             let (signs, k_densified) = Self::get_signs(seq_hashes, *k, &mut read_filter, num_bins);
             densified |= k_densified;
-            minhash_sum += (signs[0] as f64) / (SIGN_MOD as f64);
+            minhash_sum += (signs[0] as f64) / (u64::MAX as f64);
 
             // Transpose the bins and save to the sketch map
             log::debug!("Transposing bins");
-            let mut kmer_usigs = vec![0; usigs_size as usize];
+            let mut kmer_usigs = aligned_sketch_vec_filled(usigs_size as usize, 0);
             Self::fill_usigs(&mut kmer_usigs, &signs);
             usigs.append(&mut kmer_usigs);
         }
@@ -190,9 +224,8 @@ impl Sketch {
         seq_hashes.set_k(kmer_size);
 
         // Calculate bin minima across all sequence
-        let bin_size: u64 = SIGN_MOD.div_ceil(num_bins);
         for hash in seq_hashes.iter() {
-            Self::bin_sign(&mut signs, hash % SIGN_MOD, bin_size, filter);
+            Self::bin_sign(&mut signs, hash, num_bins, filter);
         }
         // Densify
         let densified = Self::densify_bin(&mut signs);
@@ -214,9 +247,8 @@ impl Sketch {
         seq_hashes.set_k(kmer_size);
 
         // Calculate bin minima across all sequence
-        let bin_size: u64 = SIGN_MOD.div_ceil(num_bins);
         for hash in seq_hashes.iter() {
-            Self::bin_sign(&mut signs, hash % SIGN_MOD, bin_size, filter);
+            Self::bin_sign(&mut signs, hash, num_bins, filter);
         }
 
         signs
@@ -238,12 +270,13 @@ impl Sketch {
     }
 
     /// Take the (transposed) sketch, emptying it from the [`Sketch`]
-    pub fn get_usigs(&mut self) -> Vec<u64> {
-        std::mem::take(&mut self.usigs)
+    pub fn get_usigs(&mut self) -> SketchVec {
+        // Move the old aligned buffer out and install an empty one; elements are not copied.
+        std::mem::replace(&mut self.usigs, aligned_sketch_vec())
     }
 
-    fn bin_sign(signs: &mut [u64], sign: u64, binsize: u64, read_filter: &mut Option<KmerFilter>) {
-        let binidx = (sign / binsize) as usize;
+    fn bin_sign(signs: &mut [u64], sign: u64, num_bins: u64, read_filter: &mut Option<KmerFilter>) {
+        let binidx = Self::bin_index(sign, num_bins);
         // log::trace!("sign:{sign} idx:{binidx} curr_sign:{}", signs[binidx]);
         if let Some(filter) = read_filter {
             if sign < signs[binidx] && filter.filter(sign) == Ordering::Equal {
@@ -255,16 +288,30 @@ impl Sketch {
     }
 
     #[inline(always)]
+    fn bin_index(sign: u64, num_bins: u64) -> usize {
+        (((sign as u128) * (num_bins as u128)) >> u64::BITS) as usize
+    }
+
+    #[inline(always)]
     fn bit_at_pos(x: u64, pos: u64) -> u64 {
         (x & (1_u64 << pos)) >> pos
     }
 
     fn fill_usigs(usigs: &mut [u64], signs: &[u64]) {
-        for (sign_index, sign) in signs.iter().enumerate() {
-            let leftshift = sign_index % (u64::BITS as usize);
-            for i in 0..BBITS {
-                let orval = Self::bit_at_pos(*sign, i) << leftshift;
-                usigs[sign_index / (u64::BITS as usize) * (BBITS as usize) + (i as usize)] |= orval;
+        debug_assert_eq!(signs.len() % (u64::BITS as usize), 0);
+        debug_assert_eq!(usigs.len(), signs.len() / (u64::BITS as usize) * BIN_BITS);
+
+        for (usig_chunk, sign_chunk) in usigs
+            .chunks_exact_mut(BIN_BITS)
+            .zip(signs.chunks_exact(u64::BITS as usize))
+        {
+            for (bit_pos, usig) in usig_chunk.iter_mut().enumerate() {
+                *usig = sign_chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0, |bits, (sign_index, &sign)| {
+                        bits | (Self::bit_at_pos(sign, bit_pos as u64) << sign_index)
+                    });
             }
         }
     }
@@ -302,6 +349,25 @@ impl Sketch {
             }
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sketch_vec_is_64_byte_aligned_after_allocation() {
+        let mut sketch_vec = aligned_sketch_vec_with_capacity(16);
+        sketch_vec.resize(16, 0);
+        assert_eq!(sketch_vec.as_ptr() as usize % SKETCH_ALIGNMENT, 0);
+    }
+
+    #[test]
+    fn bin_index_uses_full_u64_hash_space() {
+        assert_eq!(Sketch::bin_index(0, 64), 0);
+        assert_eq!(Sketch::bin_index(1_u64 << 63, 64), 32);
+        assert_eq!(Sketch::bin_index(u64::MAX, 64), 63);
     }
 }
 
@@ -403,32 +469,35 @@ impl fmt::Display for Sketch {
 ///
 /// # let mut sketch = sketch;
 /// # assert_eq!(sketch.len(), 1);
-/// # assert_eq!(sketch[0].get_usigs(), vec![10446655729443322257_u64, 4179589106973994628, 8878020266243511022, 15496134240677377755, 12077142249206779756, 2557808496963489941, 11187838061323059739, 2644643690855717913, 4938295307178618234, 3755990044489396820, 5853149455415045639, 13413802265437751679, 13026670255550945707, 17600625581895810275, 15514998287561100248, 16224101823335952861, 7650478683895450690, 12490835276570242802, 16446545056545572452, 9136098023486151969, 14353135930022752998, 17596669057648315390, 13032397772767758586, 14311172789545189524, 8634896743882272518, 13813990681410911957, 15274287431720689540, 17130711307909519409, 14074157117691102709, 3977024316243443606, 11614473757740315713, 8590442866276072648, 3525327762139029339, 7654958233148978252, 14646652205652799167, 5876269956202259935, 16360345219485058576, 15734568599691562397, 11148612413168737116, 11587453912179871137, 2605646798685730264, 3886875076450406060]);
 /// # assert_eq!(sketch[0].name(), fastq_path_str);
 /// ```
-pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
+pub fn sketch_data<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
     records_readers: &mut [I],
     opts: SketchingOpts,
-    #[cfg(feature = "3di")]
-    convert_pdb: bool,
-    #[cfg(feature = "3di")]
-    struct_string: Option<String>,
+    #[cfg(feature = "3di")] convert_pdb: bool,
+    #[cfg(feature = "3di")] struct_string: Option<String>,
 ) -> Vec<Sketch> {
     // Read in sequence and set up rolling hash by alphabet type
     let mut hash_its: Vec<Box<dyn RollHash>> = match opts.seq_type {
-        HashType::DNA => {
-
-            NtHashIterator::new(records_readers, opts.k_vals[0], opts.add_rc, opts.min_qual, opts.is_reads)
-                .into_iter()
-                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                .collect()
-        },
-        HashType::AA(level) => {
-            AaHashIterator::new(records_readers, &opts.name, level.clone(), opts.concat_fasta)
-                .into_iter()
-                .map(|it| Box::new(it) as Box<dyn RollHash>)
-                .collect()
-        }
+        HashType::DNA => NtHashIterator::new(
+            records_readers,
+            opts.k_vals[0],
+            opts.add_rc,
+            opts.min_qual,
+            opts.is_reads,
+        )
+        .into_iter()
+        .map(|it| Box::new(it) as Box<dyn RollHash>)
+        .collect(),
+        HashType::AA(level) => AaHashIterator::new(
+            records_readers,
+            &opts.name,
+            level.clone(),
+            opts.concat_fasta,
+        )
+        .into_iter()
+        .map(|it| Box::new(it) as Box<dyn RollHash>)
+        .collect(),
         HashType::PDB => {
             #[cfg(feature = "3di")]
             if let Some(di) = &struct_string {
@@ -463,7 +532,14 @@ pub fn sketch_data<I: Iterator<Item=(Vec<u8>, Option<Vec<u8>>)>>(
                 panic!("{sample_name} has no valid sequence");
             }
             // Run the sketching
-            Sketch::new(&mut **hash_it, &sample_name, &opts.k_vals, opts.sketch_size, opts.add_rc, opts.min_count)
+            Sketch::new(
+                &mut **hash_it,
+                &sample_name,
+                &opts.k_vals,
+                opts.sketch_size,
+                opts.add_rc,
+                opts.min_count,
+            )
         })
         .collect::<Vec<Sketch>>()
 }
@@ -485,7 +561,7 @@ pub fn sketch_files(
     quiet: bool,
 ) -> Vec<Sketch> {
     let bin_stride = 1;
-    let kmer_stride = (sketch_size * BBITS) as usize;
+    let kmer_stride = sketch_size as usize * BIN_BITS;
     let sample_stride = kmer_stride * k.len();
 
     #[cfg(feature = "3di")]

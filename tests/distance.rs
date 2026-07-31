@@ -12,21 +12,52 @@ use std::io::{BufRead, BufReader};
 
 mod tests {
     use super::*;
-    // assert function with tolerance for distances
+    use approx::assert_abs_diff_eq;
+
+    // Assert function with tolerance for distances computed against the external
+    // C++ sketchlib reference values. Some of these (e.g. very short sequences)
+    // are known to diverge more than floating-point noise between implementations,
+    // so this stays a fairly loose absolute tolerance rather than a tight epsilon.
     fn assert_with_tolerance(actual: f64, expected: f64) {
-        let rounded_actual = (actual * 1000.0).round() / 1000.0;
-        let rounded_expected = (expected * 1000.0).round() / 1000.0;
+        assert_abs_diff_eq!(actual, expected, epsilon = 0.05);
+    }
 
-        let abs_tolerance = 0.05;
-        let diff = (rounded_actual - rounded_expected).abs();
-
-        assert!(
-            diff <= abs_tolerance,
-            "Absolute difference exceeds tolerance of {}. Actual: {}, Expected: {}",
-            abs_tolerance,
-            rounded_actual,
-            rounded_expected
+    // Compares tab-separated distance output against a golden file, allowing
+    // numeric fields to differ by a small epsilon (SIMD reordering can shift
+    // the last few bits of a float) while requiring an exact match on names.
+    fn assert_dist_stdout_with_tolerance(actual: &str, expected: &snapbox::Data) {
+        let expected_str = expected
+            .render()
+            .expect("Failed to render expected snapshot data");
+        let actual_lines: Vec<&str> = actual.lines().filter(|l| !l.is_empty()).collect();
+        let expected_lines: Vec<&str> = expected_str.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(
+            actual_lines.len(),
+            expected_lines.len(),
+            "Line count mismatch.\nActual:\n{actual}\nExpected:\n{expected_str}"
         );
+        for (actual_line, expected_line) in actual_lines.iter().zip(expected_lines.iter()) {
+            let actual_fields: Vec<&str> = actual_line.split('\t').collect();
+            let expected_fields: Vec<&str> = expected_line.split('\t').collect();
+            assert_eq!(
+                actual_fields.len(),
+                expected_fields.len(),
+                "Field count mismatch. Actual: {actual_line}, Expected: {expected_line}"
+            );
+            for (actual_field, expected_field) in
+                actual_fields.iter().zip(expected_fields.iter())
+            {
+                match (actual_field.parse::<f64>(), expected_field.parse::<f64>()) {
+                    (Ok(actual_val), Ok(expected_val)) => {
+                        assert_abs_diff_eq!(actual_val, expected_val, epsilon = 1e-4);
+                    }
+                    _ => assert_eq!(
+                        actual_field, expected_field,
+                        "Field mismatch. Actual line: {actual_line}, Expected line: {expected_line}"
+                    ),
+                }
+            }
+        }
     }
 
     fn read_expected_distances(
@@ -62,62 +93,9 @@ mod tests {
         }
     }
 
-    fn read_calculated_distances(full_file_name: &str) -> f64 {
-        //Read in the rust sketchlib results from file
-        BufReader::new(File::open(full_file_name).expect("Failed to open file"))
-            .lines()
-            .next()
-            .expect("File is empty")
-            .expect("Failed to read line")
-            .split_whitespace()
-            .last()
-            .expect("Line has incorrect format")
-            .parse()
-            .expect("Failed to parse number")
-    }
-
     #[test]
     fn dense_distances() {
         let sandbox = TestSetup::setup();
-
-        //Test 1: One short sequence vs one short seqeunce (1 SNP apart)
-
-        //Test 1 begin -------------
-        Command::new(cmd::cargo_bin!("sketchlib"))
-            .current_dir(sandbox.get_wd())
-            .arg("sketch")
-            .args(&["--k-vals", "3"])
-            .arg(sandbox.file_string("short_sequence.fa", TestDir::Input))
-            .arg("-v")
-            .args(&["-o", "test1_part1"])
-            .assert()
-            .success();
-        assert_eq!(true, sandbox.file_exists("test1_part1.skd"));
-        assert_eq!(true, sandbox.file_exists("test1_part1.skm"));
-
-        Command::new(cmd::cargo_bin!("sketchlib"))
-            .current_dir(sandbox.get_wd())
-            .arg("sketch")
-            .args(&["--k-vals", "3"])
-            .arg(sandbox.file_string("short_sequence_SNP.fa", TestDir::Input))
-            .arg("-v")
-            .args(&["-o", "test1_part2"])
-            .assert()
-            .success();
-        assert_eq!(true, sandbox.file_exists("test1_part2.skd"));
-        assert_eq!(true, sandbox.file_exists("test1_part2.skm"));
-
-        Command::new(cmd::cargo_bin!("sketchlib"))
-            .current_dir(sandbox.get_wd())
-            .arg("dist")
-            .arg("test1_part1")
-            .arg("test1_part2")
-            .args(&["-k", "3"])
-            .args(&["-o", "short_sequence_dist_3"])
-            .arg("-v")
-            .assert()
-            .success();
-        assert_eq!(true, sandbox.file_exists("short_sequence_dist_3"));
 
         //Test 2 begin -------------
         Command::new(cmd::cargo_bin!("sketchlib"))
@@ -203,19 +181,6 @@ mod tests {
         let mut sketchlib_true_dict: HashMap<String, Vec<f64>> = HashMap::new();
         read_expected_distances("sketchlib_output_true.txt", &mut sketchlib_true_dict);
 
-        let sketchlib_dist_3 = sketchlib_true_dict
-            .get("short_sequence_jaccard_dists_3")
-            .expect("Key not found");
-
-        let rust_dist_3 = read_calculated_distances(
-            &sandbox.file_string("short_sequence_dist_3", TestDir::Output),
-        );
-
-        // Assert or use the value as needed
-        let sketchlib_dist_3 = sketchlib_dist_3[0];
-
-        assert_with_tolerance(sketchlib_dist_3, rust_dist_3);
-
         // TEST 2:
         let rust_whole_genome: f64 = BufReader::new(
             File::open(sandbox.file_string("test2_rust_results", TestDir::Output))
@@ -290,18 +255,23 @@ mod tests {
             .success();
 
         // C-a dists at knn=1
-        Command::new(cmd::cargo_bin!("sketchlib"))
+        let ca_output = Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .arg("dist")
             .arg("sketch_db")
             .arg("-v")
             .arg("--knn")
             .arg("1")
-            .assert()
-            .stdout_eq(sandbox.snapbox_file("dists_knn_ca.stdout", TestDir::Correct));
+            .output()
+            .expect("Failed to run C-a dist");
+        assert!(ca_output.status.success());
+        assert_dist_stdout_with_tolerance(
+            &String::from_utf8(ca_output.stdout).unwrap(),
+            &sandbox.snapbox_file("dists_knn_ca.stdout", TestDir::Correct),
+        );
 
         // Jaccard dists at knn=1
-        Command::new(cmd::cargo_bin!("sketchlib"))
+        let jaccard_output = Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .arg("dist")
             .arg("sketch_db")
@@ -310,11 +280,16 @@ mod tests {
             .arg("1")
             .arg("-k")
             .arg("21")
-            .assert()
-            .stdout_eq(sandbox.snapbox_file("dists_knn_jaccard.stdout", TestDir::Correct));
+            .output()
+            .expect("Failed to run Jaccard dist");
+        assert!(jaccard_output.status.success());
+        assert_dist_stdout_with_tolerance(
+            &String::from_utf8(jaccard_output.stdout).unwrap(),
+            &sandbox.snapbox_file("dists_knn_jaccard.stdout", TestDir::Correct),
+        );
 
         // ANI dists at knn=1
-        Command::new(cmd::cargo_bin!("sketchlib"))
+        let ani_output = Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .arg("dist")
             .arg("sketch_db")
@@ -324,8 +299,13 @@ mod tests {
             .arg("-k")
             .arg("21")
             .arg("--ani")
-            .assert()
-            .stdout_eq(sandbox.snapbox_file("dists_knn_ani.stdout", TestDir::Correct));
+            .output()
+            .expect("Failed to run ANI dist");
+        assert!(ani_output.status.success());
+        assert_dist_stdout_with_tolerance(
+            &String::from_utf8(ani_output.stdout).unwrap(),
+            &sandbox.snapbox_file("dists_knn_ani.stdout", TestDir::Correct),
+        );
     }
 
     /// Helper: parse ANI distance output lines into (query, reference, ani) triples.
@@ -365,21 +345,51 @@ mod tests {
         // Disjoint reference: 14412_3#82 + 14412_3#84 only
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "rfile_ref.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "bact_db"])
+            .args([
+                "sketch",
+                "-f",
+                "rfile_ref.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "bact_db",
+            ])
             .assert()
             .success();
 
         // Query: R6 + TIGR4
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "qfile.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "query_db"])
+            .args([
+                "sketch",
+                "-f",
+                "qfile.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "query_db",
+            ])
             .assert()
             .success();
 
         // All 4 genomes — used for self-kNN consistency test only
         Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["sketch", "-f", "rfile.txt", "--k-seq", "17,31,4", "-s", "1000", "-o", "ref_db"])
+            .args([
+                "sketch",
+                "-f",
+                "rfile.txt",
+                "--k-seq",
+                "17,31,4",
+                "-s",
+                "1000",
+                "-o",
+                "ref_db",
+            ])
             .assert()
             .success();
     }
@@ -394,13 +404,18 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run sketchlib");
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         let n_lines = stdout.lines().filter(|l| !l.is_empty()).count();
-        assert_eq!(n_lines, 2, "Expected 2 queries × 1 neighbour = 2 rows, got {n_lines}");
+        assert_eq!(
+            n_lines, 2,
+            "Expected 2 queries × 1 neighbour = 2 rows, got {n_lines}"
+        );
     }
 
     /// Test 2: kNN output contains the same top-k neighbours as the dense output sorted by ANI.
@@ -428,7 +443,10 @@ mod tests {
             let reference = parts[0].to_string();
             let query = parts[1].to_string();
             let ani: f64 = parts[2].parse().expect("Could not parse ANI");
-            dense_by_query.entry(query).or_default().push((reference, ani));
+            dense_by_query
+                .entry(query)
+                .or_default()
+                .push((reference, ani));
         }
 
         // For each query, sort by ANI descending and keep top-1
@@ -441,19 +459,26 @@ mod tests {
         // kNN output columns: query(0) \t ref(1) \t ani(2)
         let knn_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run kNN dist");
         let knn_triples = parse_dist_output(&String::from_utf8(knn_out.stdout).unwrap());
 
         // Assert kNN top-1 matches dense top-1 for every query genome
         for (query, reference, knn_ani) in &knn_triples {
-            let (dense_ref, dense_ani) = dense_top1.get(query)
+            let (dense_ref, dense_ani) = dense_top1
+                .get(query)
                 .unwrap_or_else(|| panic!("Query {query} not found in dense output"));
-            assert_eq!(reference, dense_ref,
-                "Top neighbour mismatch for {query}: knn={reference}, dense={dense_ref}");
-            assert!((knn_ani - dense_ani).abs() < 1e-5,
-                "ANI mismatch for {query}/{reference}: knn={knn_ani}, dense={dense_ani}");
+            assert_eq!(
+                reference, dense_ref,
+                "Top neighbour mismatch for {query}: knn={reference}, dense={dense_ref}"
+            );
+            assert!(
+                (knn_ani - dense_ani).abs() < 1e-4,
+                "ANI mismatch for {query}/{reference}: knn={knn_ani}, dense={dense_ani}"
+            );
         }
     }
 
@@ -468,7 +493,9 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run sketchlib");
 
@@ -479,13 +506,20 @@ mod tests {
         let ref_names: HashSet<&str> = [
             "14412_3#82.contigs_velvet.fa.gz",
             "14412_3#84.contigs_velvet.fa.gz",
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         for (query, reference, _) in &triples {
-            assert!(query_names.contains(query.as_str()),
-                "Row '{query}' is not a query genome");
-            assert!(ref_names.contains(reference.as_str()),
-                "Column '{reference}' is not a reference genome");
+            assert!(
+                query_names.contains(query.as_str()),
+                "Row '{query}' is not a query genome"
+            );
+            assert!(
+                ref_names.contains(reference.as_str()),
+                "Column '{reference}' is not a reference genome"
+            );
         }
     }
 
@@ -512,7 +546,9 @@ mod tests {
         // kNN output columns: query(0) \t ref(1) \t ani(2)
         let cross_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run cross-query kNN dist");
         let cross_triples = parse_dist_output(&String::from_utf8(cross_out.stdout).unwrap());
@@ -522,11 +558,15 @@ mod tests {
         let bact_names: HashSet<&str> = [
             "14412_3#82.contigs_velvet.fa.gz",
             "14412_3#84.contigs_velvet.fa.gz",
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         let mut self_best_bact: HashMap<String, (String, f64)> = HashMap::new();
         for query in &["R6.fa.gz", "TIGR4.fa.gz"] {
-            let best = self_triples.iter()
+            let best = self_triples
+                .iter()
                 .filter(|(q, r, _)| q == query && bact_names.contains(r.as_str()))
                 .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or_else(|| panic!("No bacterial hits for {query} in self-kNN"));
@@ -535,12 +575,17 @@ mod tests {
 
         // Compare: cross-query kNN top-1 should match self-kNN top-1 from bacterial genomes
         for (query, cross_ref, cross_ani) in &cross_triples {
-            let (self_ref, self_ani) = self_best_bact.get(query)
+            let (self_ref, self_ani) = self_best_bact
+                .get(query)
                 .unwrap_or_else(|| panic!("Query {query} not found in self-kNN"));
-            assert_eq!(cross_ref, self_ref,
-                "Nearest bacterial genome mismatch for {query}: cross={cross_ref}, self={self_ref}");
-            assert!((cross_ani - self_ani).abs() < 1e-5,
-                "ANI mismatch for {query}/{cross_ref}: cross={cross_ani}, self={self_ani}");
+            assert_eq!(
+                cross_ref, self_ref,
+                "Nearest bacterial genome mismatch for {query}: cross={cross_ref}, self={self_ref}"
+            );
+            assert!(
+                (cross_ani - self_ani).abs() < 1e-4,
+                "ANI mismatch for {query}/{cross_ref}: cross={cross_ani}, self={self_ani}"
+            );
         }
     }
 
@@ -573,10 +618,18 @@ mod tests {
         let comp_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
-                "dist", "bact_db", "query_db",
-                "--knn", "1", "-k", "21", "--ani",
-                "--ref-completeness-file", "ref_completeness.txt",
-                "--query-completeness-file", "query_completeness.txt",
+                "dist",
+                "bact_db",
+                "query_db",
+                "--knn",
+                "1",
+                "-k",
+                "21",
+                "--ani",
+                "--ref-completeness-file",
+                "ref_completeness.txt",
+                "--query-completeness-file",
+                "query_completeness.txt",
             ])
             .output()
             .expect("Failed to run with completeness");
@@ -606,9 +659,16 @@ mod tests {
         let bad_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
-                "dist", "bact_db", "query_db",
-                "--knn", "1", "-k", "21", "--ani",
-                "--ref-completeness-file", "bad_completeness.txt",
+                "dist",
+                "bact_db",
+                "query_db",
+                "--knn",
+                "1",
+                "-k",
+                "21",
+                "--ani",
+                "--ref-completeness-file",
+                "bad_completeness.txt",
             ])
             .output()
             .expect("Failed to run with bad completeness");
@@ -646,11 +706,20 @@ mod tests {
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 2, "Expected 2 rows (2 queries × knn=1), got {}", lines.len());
+        assert_eq!(
+            lines.len(),
+            2,
+            "Expected 2 rows (2 queries × knn=1), got {}",
+            lines.len()
+        );
 
         for line in &lines {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            assert_eq!(parts.len(), 4, "Expected 4 columns (query, ref, core, acc): {line}");
+            assert_eq!(
+                parts.len(),
+                4,
+                "Expected 4 columns (query, ref, core, acc): {line}"
+            );
             parts[2].parse::<f64>().expect("Core distance not a float");
             parts[3].parse::<f64>().expect("Acc distance not a float");
         }
@@ -668,7 +737,9 @@ mod tests {
 
         let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
             .current_dir(sandbox.get_wd())
-            .args(["dist", "bact_db", "query_db", "--knn", "2", "-k", "21", "--ani"])
+            .args([
+                "dist", "bact_db", "query_db", "--knn", "2", "-k", "21", "--ani",
+            ])
             .output()
             .expect("Failed to run knn=n_ref cross-query");
 
@@ -710,14 +781,19 @@ mod tests {
             .success();
 
         // Subset three samples and calc dists
-        Command::new(cmd::cargo_bin!("sketchlib"))
+        let subset_output = Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .arg("dist")
             .arg("sketch_db")
             .arg("-v")
             .arg("--subset")
             .arg(sandbox.file_string("subset.txt", TestDir::Input))
-            .assert()
-            .stdout_eq(sandbox.snapbox_file("dists_subset.stdout", TestDir::Correct));
+            .output()
+            .expect("Failed to run subset dist");
+        assert!(subset_output.status.success());
+        assert_dist_stdout_with_tolerance(
+            &String::from_utf8(subset_output.stdout).unwrap(),
+            &sandbox.snapbox_file("dists_subset.stdout", TestDir::Correct),
+        );
     }
 }

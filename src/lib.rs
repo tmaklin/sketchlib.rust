@@ -9,8 +9,7 @@
 //!   above these distances is unsupported and may lead to poor estimation of distances
 //!   without clear warning.
 //! - Short k-mer lengths are likely to match at random, see [PopPUNK's docs](https://poppunk-docs.bacpop.org/sketching.html#choosing-the-right-k-mer-lengths)
-//!   for information on how to select good lengths. Note that this library does not support
-//!   random match correction.
+//!   for information on how to select good lengths. 
 //! - ANI distance resolution is highly affected by sketch size at higher mismatch
 //!   levels, so note that if you see lots of samples at around 80% they may be much lower than
 //!   this. We recommend checking the Jaccard values in this case, if they are close to 0
@@ -409,7 +408,9 @@ pub fn main() -> Result<(), Error> {
                         Some(mut nn) => {
                             // Cross-query mode: query genomes never overlap ref genomes, so knn=n is valid
                             if nn > n {
-                                log::warn!("knn={nn} is higher than number of reference samples={n}");
+                                log::warn!(
+                                    "knn={nn} is higher than number of reference samples={n}"
+                                );
                                 nn = n;
                             }
                             // Cross-query mode (sparse kNN)
@@ -427,7 +428,8 @@ pub fn main() -> Result<(), Error> {
                                 *completeness_cutoff,
                             );
                             log::info!("Writing out in sparse matrix form");
-                            write!(output_file, "{distances}").expect("Error writing output distances");
+                            write!(output_file, "{distances}")
+                                .expect("Error writing output distances");
                         }
                         None => {
                             // Cross-query mode (dense, all pairs)
@@ -444,7 +446,8 @@ pub fn main() -> Result<(), Error> {
                                 *completeness_cutoff,
                             );
                             log::info!("Writing out in long matrix form");
-                            write!(output_file, "{distances}").expect("Error writing output distances");
+                            write!(output_file, "{distances}")
+                                .expect("Error writing output distances");
                         }
                     }
                 }
