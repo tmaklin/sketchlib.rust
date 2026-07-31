@@ -20,6 +20,8 @@
 //! Sketch databases have two files: `.skm` which is the metadata (samples names, base counts etc)
 //! and `.skd` which is the actual sketch data. These must have the same prefix.
 //!
+//! *NB: Sketch format was updated in v0.4.0 (breaking). Previous databases are 'legacy' and you can still calculate distances within them, but not as queries between legacy and new format databases. We recommend resketching if possible. Older releases are also available to continue to work with these files in full.*
+//!
 //! Inverted indexes are `.ski` files, and should be specified using their full name (not just the prefix).
 //! These optionally include and `.skq` file which is needed if used for preclustering.
 //!

@@ -308,8 +308,10 @@ impl Sketch {
         debug_assert_eq!(usigs.len(), signs.len() / (u64::BITS as usize) * BIN_BITS);
 
         for (usig_chunk, sign_chunk) in usigs
-            .chunks_exact_mut(BIN_BITS)
-            .zip(signs.chunks_exact(u64::BITS as usize))
+            .as_chunks_mut::<BIN_BITS>()
+            .0
+            .iter_mut()
+            .zip(signs.as_chunks::<{ u64::BITS as usize }>().0.iter())
         {
             for (bit_pos, usig) in usig_chunk.iter_mut().enumerate() {
                 *usig = sign_chunk

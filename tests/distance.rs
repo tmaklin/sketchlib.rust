@@ -43,7 +43,8 @@ mod tests {
             )
         };
         let mut actual_lines: Vec<&str> = actual.lines().filter(|l| !l.is_empty()).collect();
-        let mut expected_lines: Vec<&str> = expected_str.lines().filter(|l| !l.is_empty()).collect();
+        let mut expected_lines: Vec<&str> =
+            expected_str.lines().filter(|l| !l.is_empty()).collect();
         actual_lines.sort_by_key(name_key);
         expected_lines.sort_by_key(name_key);
         assert_eq!(
@@ -866,7 +867,11 @@ mod tests {
         {
             assert_abs_diff_eq!(*core, *iter_core as f64, epsilon = 1e-4);
             let iter_accessory = iter_accessory.expect("dists_iter should yield Some for CoreAcc");
-            assert_abs_diff_eq!(accessory.expect("Some in CoreAcc"), iter_accessory as f64, epsilon = 1e-4);
+            assert_abs_diff_eq!(
+                accessory.expect("Some in CoreAcc"),
+                iter_accessory as f64,
+                epsilon = 1e-4
+            );
         }
 
         // Jaccard matrix (-k given): dists_iter should yield None
@@ -875,8 +880,7 @@ mod tests {
         let display_pairs = parse_display_pairs(&jaccard_matrix.to_string(), false);
         let iter_pairs: Vec<(f32, Option<f32>)> = jaccard_matrix.dists_iter().collect();
         assert_eq!(display_pairs.len(), iter_pairs.len());
-        for ((dist, _), (iter_dist, iter_accessory)) in
-            display_pairs.iter().zip(iter_pairs.iter())
+        for ((dist, _), (iter_dist, iter_accessory)) in display_pairs.iter().zip(iter_pairs.iter())
         {
             assert_abs_diff_eq!(*dist, *iter_dist as f64, epsilon = 1e-4);
             assert!(iter_accessory.is_none());
@@ -1210,7 +1214,9 @@ mod tests {
         let n = legacy.number_samples_loaded();
         let n_query = fresh.number_samples_loaded();
         let dist_type = set_k(&legacy, Some(17), false).expect("set_k failed");
-        cross_dists_all(&legacy, &fresh, n, n_query, dist_type, true, None, None, 0.0);
+        cross_dists_all(
+            &legacy, &fresh, n, n_query, dist_type, true, None, None, 0.0,
+        );
     }
 
     #[test]
@@ -1245,8 +1251,9 @@ mod tests {
         );
         let err = result.expect_err("expected mismatched-generation rejection");
         assert!(
-            err.to_string()
-                .contains("Cannot compare reference and query databases with different sketch generations"),
+            err.to_string().contains(
+                "Cannot compare reference and query databases with different sketch generations"
+            ),
             "Unexpected error: {err}"
         );
     }

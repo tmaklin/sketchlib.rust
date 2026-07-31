@@ -18,7 +18,7 @@ allowing subsets of samples to be compared.
 ### News
 
 - **Data format changed in v0.4.0**. If you have an older database (see `sketchlib info <db_prefix> | grep "sketch_version"`)
-you should resketch samples with >v0.4. Otherwise you will need to use an older release available on crates.io.
+you should resketch samples with >v0.4 if possible. Otherwise you will need to use an older release available on crates.io.
 - v0.2.0 was the first stable release.
 
 ## Documentation

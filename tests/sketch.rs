@@ -149,8 +149,9 @@ mod tests {
         use sketchlib::sketch::multisketch::MultiSketch;
         let sandbox = TestSetup::setup();
 
-        let sketches = MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
-            .expect("Loading a pre-v0.4 sketch file should now succeed (legacy mode)");
+        let sketches =
+            MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
+                .expect("Loading a pre-v0.4 sketch file should now succeed (legacy mode)");
         assert!(
             sketches.is_legacy_format(),
             "legacy_db.skm (v0.1.3) should be detected as legacy format"

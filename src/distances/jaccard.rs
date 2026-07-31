@@ -192,8 +192,14 @@ mod tests {
         let mut sketch2 = [u64::MAX; BIN_BITS * 2];
         sketch2[BIN_BITS] = 0;
 
-        assert_eq!(jaccard_same_bits_general::<BIN_BITS>(&sketch1, &sketch1), 128);
-        assert_eq!(jaccard_same_bits_general::<BIN_BITS>(&sketch1, &sketch2), 64);
+        assert_eq!(
+            jaccard_same_bits_general::<BIN_BITS>(&sketch1, &sketch1),
+            128
+        );
+        assert_eq!(
+            jaccard_same_bits_general::<BIN_BITS>(&sketch1, &sketch2),
+            64
+        );
     }
 
     #[cfg(target_arch = "aarch64")]

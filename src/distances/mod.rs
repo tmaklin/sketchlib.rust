@@ -273,8 +273,7 @@ fn self_dists_all_stream_generic<const BB: usize, W: IoWrite + Send>(
                             } else {
                                 (1.0_f64 - j_index) as f32
                             };
-                            let _ =
-                                writeln!(buf, "{}\t{}\t{dist}", ref_names[i], ref_names[j]);
+                            let _ = writeln!(buf, "{}\t{}\t{dist}", ref_names[i], ref_names[j]);
                         } else {
                             let d = core_acc_dist_generic::<BB>(
                                 sketches,
@@ -460,7 +459,10 @@ pub fn cross_dists_all<'a>(
         query_sketches.is_legacy_format(),
     );
     if ref_legacy != query_legacy {
-        panic!("{}", mismatched_generation_message(ref_legacy, query_legacy));
+        panic!(
+            "{}",
+            mismatched_generation_message(ref_legacy, query_legacy)
+        );
     }
     if ref_legacy {
         cross_dists_all_generic::<LEGACY_BIN_BITS>(
@@ -670,11 +672,7 @@ fn cross_dists_all_stream_generic<const BB: usize, W: IoWrite + Send>(
                             } else {
                                 (1.0_f64 - j_index) as f32
                             };
-                            let _ = writeln!(
-                                buf,
-                                "{}\t{}\t{dist}",
-                                ref_names[i], query_names[j]
-                            );
+                            let _ = writeln!(buf, "{}\t{}\t{dist}", ref_names[i], query_names[j]);
                         } else {
                             let d = core_acc_dist_generic::<BB>(
                                 ref_sketches,
@@ -736,7 +734,10 @@ pub fn cross_dists_knn<'a>(
         query_sketches.is_legacy_format(),
     );
     if ref_legacy != query_legacy {
-        panic!("{}", mismatched_generation_message(ref_legacy, query_legacy));
+        panic!(
+            "{}",
+            mismatched_generation_message(ref_legacy, query_legacy)
+        );
     }
     if ref_legacy {
         cross_dists_knn_generic::<LEGACY_BIN_BITS>(
@@ -1088,10 +1089,7 @@ mod tests {
             }
             for i in 0..n {
                 for j in (i + 1)..n {
-                    assert!(
-                        unique.contains(&(i, j)),
-                        "missing pair ({i},{j}) for n={n}"
-                    );
+                    assert!(unique.contains(&(i, j)), "missing pair ({i},{j}) for n={n}");
                 }
             }
         }
