@@ -25,12 +25,27 @@ mod tests {
     // Compares tab-separated distance output against a golden file, allowing
     // numeric fields to differ by a small epsilon (SIMD reordering can shift
     // the last few bits of a float) while requiring an exact match on names.
+    //
+    // Rows are sorted by their (name1, name2) key columns before comparing, since
+    // streamed dense output order is not guaranteed to match the golden file's
+    // row-major order. Sorting by the name columns (not the whole line) avoids the
+    // sort itself being perturbed by the numeric noise this function already
+    // tolerates.
     fn assert_dist_stdout_with_tolerance(actual: &str, expected: &snapbox::Data) {
         let expected_str = expected
             .render()
             .expect("Failed to render expected snapshot data");
-        let actual_lines: Vec<&str> = actual.lines().filter(|l| !l.is_empty()).collect();
-        let expected_lines: Vec<&str> = expected_str.lines().filter(|l| !l.is_empty()).collect();
+        let name_key = |line: &&str| {
+            let mut fields = line.splitn(3, '\t');
+            (
+                fields.next().unwrap_or("").to_string(),
+                fields.next().unwrap_or("").to_string(),
+            )
+        };
+        let mut actual_lines: Vec<&str> = actual.lines().filter(|l| !l.is_empty()).collect();
+        let mut expected_lines: Vec<&str> = expected_str.lines().filter(|l| !l.is_empty()).collect();
+        actual_lines.sort_by_key(name_key);
+        expected_lines.sort_by_key(name_key);
         assert_eq!(
             actual_lines.len(),
             expected_lines.len(),
@@ -865,6 +880,155 @@ mod tests {
         {
             assert_abs_diff_eq!(*dist, *iter_dist as f64, epsilon = 1e-4);
             assert!(iter_accessory.is_none());
+        }
+    }
+
+    /// Streaming self-mode dense output (`self_dists_all_stream`) must match the
+    /// non-streaming `self_dists_all`/`Display` output exactly, as a sorted line
+    /// multiset (chunk order across threads is not guaranteed, but both paths call
+    /// the same per-pair math, so results should be bit-identical once sorted).
+    /// Covers CoreAcc, Jaccard, and ANI.
+    #[test]
+    fn self_dists_stream_matches_non_streaming() {
+        use sketchlib::distances::{self_dists_all, self_dists_all_stream, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        sandbox.copy_input_file_to_wd("14412_3#82.contigs_velvet.fa.gz");
+        sandbox.copy_input_file_to_wd("14412_3#84.contigs_velvet.fa.gz");
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        sandbox.copy_input_file_to_wd("TIGR4.fa.gz");
+        sandbox.copy_input_file_to_wd("rfile.txt");
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .arg("-o")
+            .arg("stream_db")
+            .args(["-v", "--k-seq", "17,31,4", "-s", "1000"])
+            .arg("-f")
+            .arg("rfile.txt")
+            .assert()
+            .success();
+
+        let sketches = MultiSketch::load(&sandbox.file_string("stream_db", TestDir::Output))
+            .expect("failed to load sketches");
+        let n = sketches.number_samples_loaded();
+
+        for (dist_type_a, dist_type_b) in [
+            (
+                set_k(&sketches, None, false).expect("set_k failed"),
+                set_k(&sketches, None, false).expect("set_k failed"),
+            ),
+            (
+                set_k(&sketches, Some(17), false).expect("set_k failed"),
+                set_k(&sketches, Some(17), false).expect("set_k failed"),
+            ),
+            (
+                set_k(&sketches, Some(17), true).expect("set_k failed"),
+                set_k(&sketches, Some(17), true).expect("set_k failed"),
+            ),
+        ] {
+            let matrix = self_dists_all(&sketches, n, dist_type_a, true, None, 0.0);
+            let non_streamed = matrix.to_string();
+
+            let mut streamed_bytes: Vec<u8> = Vec::new();
+            self_dists_all_stream(
+                &mut streamed_bytes,
+                &sketches,
+                n,
+                dist_type_b,
+                true,
+                None,
+                0.0,
+                2,
+            )
+            .expect("self_dists_all_stream failed");
+            let streamed = String::from_utf8(streamed_bytes).expect("non-utf8 stream output");
+
+            let mut non_streamed_lines: Vec<&str> =
+                non_streamed.lines().filter(|l| !l.is_empty()).collect();
+            let mut streamed_lines: Vec<&str> =
+                streamed.lines().filter(|l| !l.is_empty()).collect();
+            non_streamed_lines.sort_unstable();
+            streamed_lines.sort_unstable();
+            assert_eq!(
+                non_streamed_lines, streamed_lines,
+                "Streamed and non-streamed self-mode output differ"
+            );
+        }
+    }
+
+    /// Cross-query analogue of `self_dists_stream_matches_non_streaming`.
+    #[test]
+    fn cross_dists_stream_matches_non_streaming() {
+        use sketchlib::distances::{cross_dists_all, cross_dists_all_stream, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        sketch_ref_and_query(&sandbox);
+
+        let references = MultiSketch::load(&sandbox.file_string("bact_db", TestDir::Output))
+            .expect("failed to load reference sketches");
+        let queries = MultiSketch::load(&sandbox.file_string("query_db", TestDir::Output))
+            .expect("failed to load query sketches");
+        let n = references.number_samples_loaded();
+        let n_query = queries.number_samples_loaded();
+
+        for (dist_type_a, dist_type_b) in [
+            (
+                set_k(&references, None, false).expect("set_k failed"),
+                set_k(&references, None, false).expect("set_k failed"),
+            ),
+            (
+                set_k(&references, Some(17), false).expect("set_k failed"),
+                set_k(&references, Some(17), false).expect("set_k failed"),
+            ),
+            (
+                set_k(&references, Some(17), true).expect("set_k failed"),
+                set_k(&references, Some(17), true).expect("set_k failed"),
+            ),
+        ] {
+            let matrix = cross_dists_all(
+                &references,
+                &queries,
+                n,
+                n_query,
+                dist_type_a,
+                true,
+                None,
+                None,
+                0.0,
+            );
+            let non_streamed = matrix.to_string();
+
+            let mut streamed_bytes: Vec<u8> = Vec::new();
+            cross_dists_all_stream(
+                &mut streamed_bytes,
+                &references,
+                &queries,
+                n,
+                n_query,
+                dist_type_b,
+                true,
+                None,
+                None,
+                0.0,
+                2,
+            )
+            .expect("cross_dists_all_stream failed");
+            let streamed = String::from_utf8(streamed_bytes).expect("non-utf8 stream output");
+
+            let mut non_streamed_lines: Vec<&str> =
+                non_streamed.lines().filter(|l| !l.is_empty()).collect();
+            let mut streamed_lines: Vec<&str> =
+                streamed.lines().filter(|l| !l.is_empty()).collect();
+            non_streamed_lines.sort_unstable();
+            streamed_lines.sort_unstable();
+            assert_eq!(
+                non_streamed_lines, streamed_lines,
+                "Streamed and non-streamed cross-mode output differ"
+            );
         }
     }
 }

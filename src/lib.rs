@@ -312,7 +312,14 @@ pub fn main() -> Result<(), Error> {
             query_completeness_file,
             completeness_cutoff,
         } => {
-            check_and_set_threads(*threads);
+            if knn.is_none() {
+                // Dense path streams output via an internal writer thread running
+                // concurrently with compute (mirrors Sketch/Append/Inverted Build/Query).
+                set_threads_with_writer(*threads);
+            } else {
+                // Sparse/kNN path: unchanged, single-shot write, no writer thread.
+                check_and_set_threads(*threads);
+            }
 
             let mut output_file = set_ostream(output);
 
@@ -359,17 +366,17 @@ pub fn main() -> Result<(), Error> {
                         None => {
                             // Self mode (dense)
                             log::info!("Calculating all ref vs ref distances");
-                            let distances = self_dists_all(
+                            log::info!("Streaming out in long matrix form");
+                            self_dists_all_stream(
+                                &mut output_file,
                                 &references,
                                 n,
                                 dist_type,
                                 args.quiet,
                                 ref_completeness_vec.as_ref(),
                                 *completeness_cutoff,
-                            );
-                            log::info!("Writing out in long matrix form");
-                            write!(output_file, "{distances}")
-                                .expect("Error writing output distances");
+                                *threads,
+                            )?;
                         }
                         Some(mut nn) => {
                             // Self mode (sparse): a genome cannot be its own neighbour
@@ -432,7 +439,9 @@ pub fn main() -> Result<(), Error> {
                         None => {
                             // Cross-query mode (dense, all pairs)
                             log::info!("Calculating all ref vs query distances");
-                            let distances = cross_dists_all(
+                            log::info!("Streaming out in long matrix form");
+                            cross_dists_all_stream(
+                                &mut output_file,
                                 &references,
                                 &query_db,
                                 n,
@@ -442,10 +451,8 @@ pub fn main() -> Result<(), Error> {
                                 ref_completeness_vec.as_ref(),
                                 query_completeness_vec.as_ref(),
                                 *completeness_cutoff,
-                            );
-                            log::info!("Writing out in long matrix form");
-                            write!(output_file, "{distances}")
-                                .expect("Error writing output distances");
+                                *threads,
+                            )?;
                         }
                     }
                 }
