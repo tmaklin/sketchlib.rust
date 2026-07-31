@@ -40,6 +40,12 @@ use self::sketch_datafile::SketchArrayWriter;
 
 /// Bin bits (lowest of 64-bits to keep)
 pub const BIN_BITS: usize = 16;
+/// Legacy bin-packing width used by `.skd`/`.skm` databases written before
+/// v0.4.0 (see [`multisketch::MIN_SKETCH_VERSION`]), prior to the `BIN_BITS`
+/// 14->16 change. Distance-calculation use only — there is no code path
+/// that creates new sketches with this width; sketch creation always uses
+/// [`BIN_BITS`].
+pub const LEGACY_BIN_BITS: usize = 14;
 /// Byte alignment used for bit-packed sketch buffers.
 pub const SKETCH_ALIGNMENT: usize = 64;
 
@@ -302,8 +308,10 @@ impl Sketch {
         debug_assert_eq!(usigs.len(), signs.len() / (u64::BITS as usize) * BIN_BITS);
 
         for (usig_chunk, sign_chunk) in usigs
-            .chunks_exact_mut(BIN_BITS)
-            .zip(signs.chunks_exact(u64::BITS as usize))
+            .as_chunks_mut::<BIN_BITS>()
+            .0
+            .iter_mut()
+            .zip(signs.as_chunks::<{ u64::BITS as usize }>().0.iter())
         {
             for (bit_pos, usig) in usig_chunk.iter_mut().enumerate() {
                 *usig = sign_chunk

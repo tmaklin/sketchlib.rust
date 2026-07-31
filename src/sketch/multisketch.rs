@@ -152,21 +152,18 @@ impl MultiSketch {
         let decompress_reader = snap::read::FrameDecoder::new(skm_file);
         let mut skm_obj: Self = ciborium::de::from_reader(decompress_reader)?;
 
-        let version_ok = parse_version(&skm_obj.sketch_version)
-            .is_some_and(|version| version >= MIN_SKETCH_VERSION);
-        if !version_ok {
+        if skm_obj.is_legacy_format() {
             let found_version = if skm_obj.sketch_version.is_empty() {
                 "<unknown>"
             } else {
                 &skm_obj.sketch_version
             };
-            log::error!(
-                "Sketch file {filename} was created with sketchlib v{found_version}, which is older than the minimum supported v{}.{}.{}. Please re-sketch with the current version.",
+            log::warn!(
+                "Sketch file {filename} was created with sketchlib v{found_version}, older than v{}.{}.{} — legacy mode in use, resketching advised.",
                 MIN_SKETCH_VERSION.0,
                 MIN_SKETCH_VERSION.1,
                 MIN_SKETCH_VERSION.2
             );
-            bail!("Incompatible sketch file version");
         }
 
         // For backwards compatibility (field added in v0.2.0)
@@ -211,6 +208,17 @@ impl MultiSketch {
     /// Type of sequence sketched
     pub fn get_hash_type(&self) -> &HashType {
         &self.hash_type
+    }
+
+    /// Returns `true` if this database predates [`MIN_SKETCH_VERSION`] (i.e.
+    /// was written with the legacy 14-bit, `SIGN_MOD`-based binning scheme
+    /// used before v0.4). Legacy databases can still have distances
+    /// calculated — `distances::self_dists_*`/`distances::cross_dists_*`
+    /// dispatch to the legacy-width Jaccard math automatically based on this
+    /// flag — but cannot be freshly created, and cannot be compared (query
+    /// mode) or merged against a new-format database.
+    pub fn is_legacy_format(&self) -> bool {
+        parse_version(&self.sketch_version).is_none_or(|version| version < MIN_SKETCH_VERSION)
     }
 
     /// The stored metadata for each loaded sketch
@@ -311,6 +319,7 @@ impl MultiSketch {
         self.kmer_lengths() == sketch2.kmer_lengths()
             && self.sketch_size == sketch2.sketch_size
             && self.get_hash_type() == sketch2.get_hash_type()
+            && self.is_legacy_format() == sketch2.is_legacy_format()
     }
 
     /// Checks for append compatibility with another [`MultiSketch`] object
@@ -384,7 +393,19 @@ impl MultiSketch {
             }
         }
 
+        // Re-index retained samples to their new (compacted) position and
+        // rebuild name_map to match. `remove_genomes` filters the .skd in the
+        // same original relative order (using the pre-mutation name_map/count,
+        // by design called before this), so position `idx` here also matches
+        // the newly written .skd record `idx` it produces.
+        let mut new_name_map = HashMap::with_capacity(new_sketch_metadata.len());
+        for (idx, sketch) in new_sketch_metadata.iter_mut().enumerate() {
+            sketch.set_index(idx);
+            new_name_map.insert(sketch.name().to_string(), idx);
+        }
+
         self.sketch_metadata = new_sketch_metadata;
+        self.name_map = new_name_map;
         self.save_metadata(output_file_name)?;
         Ok(())
     }

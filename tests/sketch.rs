@@ -141,19 +141,57 @@ mod tests {
     }
 
     #[test]
-    /// The MultiSketch (.skd/.skm) format changed as of v0.4, so databases
-    /// created with older versions (this fixture is v0.1.3) must be refused
-    /// rather than silently loaded.
-    fn legacy_database_rejected() {
+    /// The MultiSketch (.skd/.skm) format changed as of v0.4; older databases
+    /// (this fixture is v0.1.3) must still load successfully — with a
+    /// `log::warn!`, not a hard error — so distances can be calculated
+    /// against them in legacy mode. See `MultiSketch::is_legacy_format`.
+    fn legacy_database_loads_with_warning() {
         use sketchlib::sketch::multisketch::MultiSketch;
         let sandbox = TestSetup::setup();
 
-        let err = MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
-            .expect_err("Loading a pre-v0.4 sketch file should fail");
+        let sketches =
+            MultiSketch::load_metadata(&sandbox.file_string("legacy_db", TestDir::Input))
+                .expect("Loading a pre-v0.4 sketch file should now succeed (legacy mode)");
         assert!(
-            err.to_string().contains("Incompatible sketch file version"),
-            "Unexpected error loading legacy sketch: {err}"
+            sketches.is_legacy_format(),
+            "legacy_db.skm (v0.1.3) should be detected as legacy format"
         );
+        assert_eq!(sketches.number_samples_loaded(), 2);
+        assert_eq!(sketches.kmer_lengths(), &[17, 21, 25]);
+    }
+
+    #[test]
+    fn legacy_bitpack_metadata_loads_correctly() {
+        use sketchlib::sketch::multisketch::MultiSketch;
+        let sandbox = TestSetup::setup();
+
+        let sketches =
+            MultiSketch::load_metadata(&sandbox.file_string("legacy_bitpack", TestDir::Input))
+                .expect("Loading legacy_bitpack.skm should succeed");
+        assert!(sketches.is_legacy_format());
+        assert_eq!(sketches.number_samples_loaded(), 1);
+        assert_eq!(sketches.kmer_lengths(), &[31]);
+        assert_eq!(sketches.sketch_size, 1024);
+    }
+
+    #[test]
+    fn new_database_is_not_legacy_format() {
+        use sketchlib::sketch::multisketch::MultiSketch;
+        let sandbox = TestSetup::setup();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .arg("-o")
+            .arg("fresh")
+            .args(["-v", "-k", "21"])
+            .arg(sandbox.file_string("R6.fa.gz", TestDir::Input))
+            .assert()
+            .success();
+
+        let sketches = MultiSketch::load_metadata(&sandbox.file_string("fresh", TestDir::Output))
+            .expect("Loading a freshly-sketched database should succeed");
+        assert!(!sketches.is_legacy_format());
     }
 
     #[test]

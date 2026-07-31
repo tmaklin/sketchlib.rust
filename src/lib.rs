@@ -20,6 +20,8 @@
 //! Sketch databases have two files: `.skm` which is the metadata (samples names, base counts etc)
 //! and `.skd` which is the actual sketch data. These must have the same prefix.
 //!
+//! *NB: Sketch format was updated in v0.4.0 (breaking). Previous databases are 'legacy' and you can still calculate distances within them, but not as queries between legacy and new format databases. We recommend resketching if possible. Older releases are also available to continue to work with these files in full.*
+//!
 //! Inverted indexes are `.ski` files, and should be specified using their full name (not just the prefix).
 //! These optionally include and `.skq` file which is needed if used for preclustering.
 //!
@@ -151,7 +153,7 @@ use std::time::Instant;
 #[macro_use]
 extern crate arrayref;
 extern crate num_cpus;
-use anyhow::Error;
+use anyhow::{bail, Error};
 #[cfg(not(target_arch = "wasm32"))]
 use indicatif::ParallelProgressIterator;
 #[cfg(not(target_arch = "wasm32"))]
@@ -354,6 +356,13 @@ pub fn main() -> Result<(), Error> {
                 let queries = MultiSketch::load(query_db_name)
                     .unwrap_or_else(|_| panic!("Could not read sketch data from {query_db_name}"));
                 log::info!("Read query sketches:\n{queries:?}");
+                if references.is_legacy_format() != queries.is_legacy_format() {
+                    bail!(
+                        "Cannot compare reference and query databases with different sketch generations (reference is_legacy={}, query is_legacy={}): legacy (pre-v0.4) and new-format databases use incompatible bin-packing schemes and cannot be directly compared. Please re-sketch both databases with the current version.",
+                        references.is_legacy_format(),
+                        queries.is_legacy_format()
+                    );
+                }
                 Some(queries)
             } else {
                 None
@@ -476,6 +485,9 @@ pub fn main() -> Result<(), Error> {
             // check compatibility
             if !sketches1.is_compatible_with(&sketches2) {
                 panic!("Databases are not compatible for merging.")
+            }
+            if sketches1.is_legacy_format() {
+                log::warn!("Merging legacy-format (pre-v0.4) sketch databases; distances calculated against the result will use legacy mode. Resketching advised.");
             }
 
             log::info!("Merging metadata to {output}.skm");
@@ -899,12 +911,14 @@ pub fn main() -> Result<(), Error> {
             let mut sketches: MultiSketch = MultiSketch::load_metadata(ref_db)
                 .unwrap_or_else(|_| panic!("Could not read sketch metadata from {ref_db}.skm"));
 
-            // write new .skm
-            sketches.remove_metadata(output_file, &ids)?;
-
-            // remove samples from .skd file
+            // Remove samples from the .skd file first: this reads positions from
+            // the original (pre-filter) name_map/sketch count, which
+            // remove_metadata below would otherwise mutate out from under it.
             log::info!("Remove genomes and writing output");
             sketches.remove_genomes(ref_db, output_file, &ids)?;
+
+            // write new .skm
+            sketches.remove_metadata(output_file, &ids)?;
 
             log::info!("Finished writing filtered sketch data to {output_file}");
 

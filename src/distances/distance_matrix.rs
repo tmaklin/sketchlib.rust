@@ -176,7 +176,9 @@ impl<'a> DistanceMatrix<'a> {
         if self.jaccard == DistType::CoreAcc {
             Box::new(
                 self.distances
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|pair| (pair[0], Some(pair[1]))),
             )
         } else {

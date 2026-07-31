@@ -43,7 +43,8 @@ mod tests {
             )
         };
         let mut actual_lines: Vec<&str> = actual.lines().filter(|l| !l.is_empty()).collect();
-        let mut expected_lines: Vec<&str> = expected_str.lines().filter(|l| !l.is_empty()).collect();
+        let mut expected_lines: Vec<&str> =
+            expected_str.lines().filter(|l| !l.is_empty()).collect();
         actual_lines.sort_by_key(name_key);
         expected_lines.sort_by_key(name_key);
         assert_eq!(
@@ -866,7 +867,11 @@ mod tests {
         {
             assert_abs_diff_eq!(*core, *iter_core as f64, epsilon = 1e-4);
             let iter_accessory = iter_accessory.expect("dists_iter should yield Some for CoreAcc");
-            assert_abs_diff_eq!(accessory.expect("Some in CoreAcc"), iter_accessory as f64, epsilon = 1e-4);
+            assert_abs_diff_eq!(
+                accessory.expect("Some in CoreAcc"),
+                iter_accessory as f64,
+                epsilon = 1e-4
+            );
         }
 
         // Jaccard matrix (-k given): dists_iter should yield None
@@ -875,8 +880,7 @@ mod tests {
         let display_pairs = parse_display_pairs(&jaccard_matrix.to_string(), false);
         let iter_pairs: Vec<(f32, Option<f32>)> = jaccard_matrix.dists_iter().collect();
         assert_eq!(display_pairs.len(), iter_pairs.len());
-        for ((dist, _), (iter_dist, iter_accessory)) in
-            display_pairs.iter().zip(iter_pairs.iter())
+        for ((dist, _), (iter_dist, iter_accessory)) in display_pairs.iter().zip(iter_pairs.iter())
         {
             assert_abs_diff_eq!(*dist, *iter_dist as f64, epsilon = 1e-4);
             assert!(iter_accessory.is_none());
@@ -1030,5 +1034,281 @@ mod tests {
                 "Streamed and non-streamed cross-mode output differ"
             );
         }
+    }
+
+    /// Loads `legacy_db` (v0.1.3, legacy 14-bit format, R6 vs TIGR4, k=[17,21,25],
+    /// sketch_size=128) as the legacy side of a mismatched-generation pair, and
+    /// freshly sketches R6.fa.gz as the new-format side. Used only by the
+    /// rejection tests below — the two sides deliberately don't need matching
+    /// k-mer lengths/sketch size, since the generation guard fires first.
+    fn legacy_and_fresh_dbs(
+        sandbox: &TestSetup,
+    ) -> (
+        sketchlib::sketch::multisketch::MultiSketch,
+        sketchlib::sketch::multisketch::MultiSketch,
+    ) {
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let legacy = MultiSketch::load(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect("failed to load legacy_db");
+
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(["-o", "fresh_for_mismatch"])
+            .args(["-v", "-k", "21"])
+            .arg("R6.fa.gz")
+            .assert()
+            .success();
+        let fresh = MultiSketch::load(&sandbox.file_string("fresh_for_mismatch", TestDir::Output))
+            .expect("failed to load fresh_for_mismatch");
+
+        (legacy, fresh)
+    }
+
+    /// Jaccard distance still computes correctly in legacy mode: `legacy_db`'s
+    /// R6-vs-TIGR4 pair at k=17, via the public `self_dists_all` dispatch (which
+    /// resolves to the legacy code path via `MultiSketch::is_legacy_format`).
+    /// The expected value is a deterministic, previously-measured baseline for
+    /// this fixture — this is a regression check, not a tolerance-based one.
+    #[test]
+    fn legacy_db_jaccard_distance_via_self_dists_all() {
+        use sketchlib::distances::{self_dists_all, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        let sketches = MultiSketch::load(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect("failed to load legacy_db");
+        assert!(sketches.is_legacy_format());
+        let n = sketches.number_samples_loaded();
+
+        let dist_type = set_k(&sketches, Some(17), false).expect("set_k failed");
+        let matrix = self_dists_all(&sketches, n, dist_type, true, None, 0.0);
+        let (dist, accessory) = matrix.dists_iter().next().expect("expected one pair");
+        assert!(accessory.is_none());
+        assert_abs_diff_eq!(dist as f64, 0.2343893, epsilon = 1e-4);
+    }
+
+    /// Core/accessory distance still computes correctly in legacy mode, using
+    /// all three of `legacy_db`'s k-mer lengths (17, 21, 25).
+    #[test]
+    fn legacy_db_core_accessory_distance_via_self_dists_all() {
+        use sketchlib::distances::{self_dists_all, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        let sketches = MultiSketch::load(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect("failed to load legacy_db");
+        let n = sketches.number_samples_loaded();
+
+        let dist_type = set_k(&sketches, None, false).expect("set_k failed");
+        let matrix = self_dists_all(&sketches, n, dist_type, true, None, 0.0);
+        let (core, accessory) = matrix.dists_iter().next().expect("expected one pair");
+        let accessory = accessory.expect("CoreAcc pair should have an accessory value");
+        assert_abs_diff_eq!(core as f64, 0.022036541, epsilon = 1e-4);
+        assert_abs_diff_eq!(accessory as f64, 0.0, epsilon = 1e-4);
+    }
+
+    /// Cross-checks legacy-mode distance calculation against an independently
+    /// re-sketched (new-format) version of the same two genomes. `legacy_db`
+    /// (R6 vs TIGR4, v0.1.3, k=[17,21,25], sketch_size=128) is compared in
+    /// legacy mode; R6.fa.gz/TIGR4.fa.gz are freshly sketched with the current
+    /// version at matching k/sketch_size and compared in new mode. The two
+    /// computed distances estimate the same true genomic distance via
+    /// different (incompatible) binning schemes, so they should agree within a
+    /// generous tolerance but are not expected to be bit-identical.
+    #[test]
+    fn legacy_and_new_format_distances_agree_for_same_genomes() {
+        use sketchlib::distances::{self_dists_all, set_k};
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        let legacy = MultiSketch::load(&sandbox.file_string("legacy_db", TestDir::Input))
+            .expect("failed to load legacy_db");
+        assert!(legacy.is_legacy_format());
+
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        sandbox.copy_input_file_to_wd("TIGR4.fa.gz");
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(["-o", "fresh_db"])
+            .args(["-v", "--k-vals", "17,21,25", "-s", "128"])
+            .arg("R6.fa.gz")
+            .arg("TIGR4.fa.gz")
+            .assert()
+            .success();
+        let fresh = MultiSketch::load(&sandbox.file_string("fresh_db", TestDir::Output))
+            .expect("failed to load fresh_db");
+        assert!(!fresh.is_legacy_format());
+
+        let legacy_n = legacy.number_samples_loaded();
+        let fresh_n = fresh.number_samples_loaded();
+
+        // Jaccard at k=17
+        let legacy_jaccard = self_dists_all(
+            &legacy,
+            legacy_n,
+            set_k(&legacy, Some(17), false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        )
+        .dists_iter()
+        .next()
+        .expect("expected one pair")
+        .0;
+        let fresh_jaccard = self_dists_all(
+            &fresh,
+            fresh_n,
+            set_k(&fresh, Some(17), false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        )
+        .dists_iter()
+        .next()
+        .expect("expected one pair")
+        .0;
+        assert_abs_diff_eq!(legacy_jaccard as f64, fresh_jaccard as f64, epsilon = 0.05);
+
+        // Core/accessory
+        let (legacy_core, legacy_acc) = self_dists_all(
+            &legacy,
+            legacy_n,
+            set_k(&legacy, None, false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        )
+        .dists_iter()
+        .next()
+        .map(|(c, a)| (c, a.expect("Some in CoreAcc")))
+        .expect("expected one pair");
+        let (fresh_core, fresh_acc) = self_dists_all(
+            &fresh,
+            fresh_n,
+            set_k(&fresh, None, false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        )
+        .dists_iter()
+        .next()
+        .map(|(c, a)| (c, a.expect("Some in CoreAcc")))
+        .expect("expected one pair");
+        assert_abs_diff_eq!(legacy_core as f64, fresh_core as f64, epsilon = 0.1);
+        assert_abs_diff_eq!(legacy_acc as f64, fresh_acc as f64, epsilon = 0.1);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Cannot compare reference and query databases with different sketch generations"
+    )]
+    fn cross_dists_all_rejects_mismatched_generations() {
+        use sketchlib::distances::{cross_dists_all, set_k};
+
+        let sandbox = TestSetup::setup();
+        let (legacy, fresh) = legacy_and_fresh_dbs(&sandbox);
+        let n = legacy.number_samples_loaded();
+        let n_query = fresh.number_samples_loaded();
+        let dist_type = set_k(&legacy, Some(17), false).expect("set_k failed");
+        cross_dists_all(
+            &legacy, &fresh, n, n_query, dist_type, true, None, None, 0.0,
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Cannot compare reference and query databases with different sketch generations"
+    )]
+    fn cross_dists_knn_rejects_mismatched_generations() {
+        use sketchlib::distances::{cross_dists_knn, set_k};
+
+        let sandbox = TestSetup::setup();
+        let (legacy, fresh) = legacy_and_fresh_dbs(&sandbox);
+        let n = legacy.number_samples_loaded();
+        let n_query = fresh.number_samples_loaded();
+        let dist_type = set_k(&legacy, Some(17), false).expect("set_k failed");
+        cross_dists_knn(
+            &legacy, &fresh, n, n_query, 1, dist_type, true, None, None, 0.0,
+        );
+    }
+
+    #[test]
+    fn cross_dists_all_stream_rejects_mismatched_generations() {
+        use sketchlib::distances::{cross_dists_all_stream, set_k};
+
+        let sandbox = TestSetup::setup();
+        let (legacy, fresh) = legacy_and_fresh_dbs(&sandbox);
+        let n = legacy.number_samples_loaded();
+        let n_query = fresh.number_samples_loaded();
+        let dist_type = set_k(&legacy, Some(17), false).expect("set_k failed");
+        let mut buf: Vec<u8> = Vec::new();
+        let result = cross_dists_all_stream(
+            &mut buf, &legacy, &fresh, n, n_query, dist_type, true, None, None, 0.0, 1,
+        );
+        let err = result.expect_err("expected mismatched-generation rejection");
+        assert!(
+            err.to_string().contains(
+                "Cannot compare reference and query databases with different sketch generations"
+            ),
+            "Unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cli_dist_rejects_mismatched_generations() {
+        let sandbox = TestSetup::setup();
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(["-o", "cli_fresh"])
+            .args(["-v", "-k", "21"])
+            .arg("R6.fa.gz")
+            .assert()
+            .success();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("dist")
+            .arg(sandbox.file_string("legacy_db", TestDir::Input))
+            .arg("cli_fresh")
+            .args(["-k", "21"])
+            .assert()
+            .failure();
+    }
+
+    /// Once the hard version error becomes a warning, `Merge` gains a real risk
+    /// it didn't need to guard against before: silently byte-concatenating a
+    /// legacy (14-bit-packed) and new-format (16-bit-packed) `.skd` into a
+    /// corrupted file. `MultiSketch::is_compatible_with` now also requires
+    /// matching `is_legacy_format()`, so this must fail loudly instead. The
+    /// fresh database is sketched with the same k-mer lengths/sketch_size as
+    /// `legacy_db` so the *only* mismatch is generation, isolating this check
+    /// from the pre-existing kmer_lengths/sketch_size/hash_type checks.
+    #[test]
+    fn merge_rejects_mismatched_generations() {
+        let sandbox = TestSetup::setup();
+        sandbox.copy_input_file_to_wd("R6.fa.gz");
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("sketch")
+            .args(["-o", "fresh_matching_shape"])
+            .args(["-v", "--k-vals", "17,21,25", "-s", "128"])
+            .arg("R6.fa.gz")
+            .assert()
+            .success();
+
+        Command::new(cmd::cargo_bin!("sketchlib"))
+            .current_dir(sandbox.get_wd())
+            .arg("merge")
+            .arg(sandbox.file_string("legacy_db", TestDir::Input))
+            .arg("fresh_matching_shape")
+            .args(["-o", "bad_merge"])
+            .assert()
+            .failure();
     }
 }
