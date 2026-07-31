@@ -40,6 +40,12 @@ use self::sketch_datafile::SketchArrayWriter;
 
 /// Bin bits (lowest of 64-bits to keep)
 pub const BIN_BITS: usize = 16;
+/// Legacy bin-packing width used by `.skd`/`.skm` databases written before
+/// v0.4.0 (see [`multisketch::MIN_SKETCH_VERSION`]), prior to the `BIN_BITS`
+/// 14->16 change. Distance-calculation use only — there is no code path
+/// that creates new sketches with this width; sketch creation always uses
+/// [`BIN_BITS`].
+pub const LEGACY_BIN_BITS: usize = 14;
 /// Byte alignment used for bit-packed sketch buffers.
 pub const SKETCH_ALIGNMENT: usize = 64;
 

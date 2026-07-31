@@ -4,7 +4,7 @@ use std::fmt::Write as FmtWrite;
 use std::io::Write as IoWrite;
 use std::sync::mpsc;
 
-use anyhow::{Context, Error};
+use anyhow::{bail, Context, Error};
 use hashbrown::HashMap;
 use indicatif::ParallelProgressIterator;
 use rayon::prelude::*;
@@ -13,6 +13,17 @@ use crate::cli::RetainUnmatched;
 use crate::get_progress_bar;
 use crate::inverted::Inverted;
 use crate::sketch::multisketch::MultiSketch;
+use crate::sketch::{BIN_BITS, LEGACY_BIN_BITS};
+
+/// Error message used whenever a reference and query database with
+/// mismatched sketch generations (legacy pre-v0.4 vs. current) are compared.
+/// Legacy and new-format databases use incompatible bin-packing schemes, so
+/// this is an explicit rejection rather than a silent/lossy conversion.
+fn mismatched_generation_message(ref_legacy: bool, query_legacy: bool) -> String {
+    format!(
+        "Cannot compare reference and query databases with different sketch generations (reference is_legacy={ref_legacy}, query is_legacy={query_legacy}): legacy (pre-v0.4) and new-format databases use incompatible bin-packing schemes and cannot be directly compared. Please re-sketch both databases with the current version."
+    )
+}
 
 pub mod distance_matrix;
 use self::distance_matrix::*;
@@ -70,6 +81,35 @@ pub fn self_dists_all<'a>(
     completeness_vec: Option<&Vec<f64>>,
     completeness_cutoff: f64,
 ) -> DistanceMatrix<'a> {
+    if sketches.is_legacy_format() {
+        self_dists_all_generic::<LEGACY_BIN_BITS>(
+            sketches,
+            n,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+        )
+    } else {
+        self_dists_all_generic::<BIN_BITS>(
+            sketches,
+            n,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+        )
+    }
+}
+
+fn self_dists_all_generic<'a, const BB: usize>(
+    sketches: &'a MultiSketch,
+    n: usize,
+    dist_type: DistType,
+    quiet: bool,
+    completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+) -> DistanceMatrix<'a> {
     let mut distances = DistanceMatrix::new(sketches, None, dist_type);
     let k_vals = distances.k_vals();
     let ani = distances.ani();
@@ -93,7 +133,7 @@ pub fn self_dists_all<'a>(
                     // This uses Option::map to safely access the completeness value for each sample.
                     let c1 = completeness_vec.map(|cv| cv[i]);
                     let c2 = completeness_vec.map(|cv| cv[j]);
-                    let j_index = jaccard_index(
+                    let j_index = jaccard_index_generic::<BB>(
                         sketches.get_sketch_slice(i, k_idx),
                         sketches.get_sketch_slice(j, k_idx),
                         sketches.sketchsize64,
@@ -108,7 +148,7 @@ pub fn self_dists_all<'a>(
                     };
                     dist_slice[dist_idx] = dist;
                 } else {
-                    let dist = core_acc_dist(
+                    let dist = core_acc_dist_generic::<BB>(
                         sketches,
                         sketches,
                         i,
@@ -153,6 +193,41 @@ pub fn self_dists_all_stream<W: IoWrite + Send>(
     completeness_cutoff: f64,
     threads: usize,
 ) -> Result<(), Error> {
+    if sketches.is_legacy_format() {
+        self_dists_all_stream_generic::<LEGACY_BIN_BITS, W>(
+            writer,
+            sketches,
+            n,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+            threads,
+        )
+    } else {
+        self_dists_all_stream_generic::<BIN_BITS, W>(
+            writer,
+            sketches,
+            n,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+            threads,
+        )
+    }
+}
+
+fn self_dists_all_stream_generic<const BB: usize, W: IoWrite + Send>(
+    writer: &mut W,
+    sketches: &MultiSketch,
+    n: usize,
+    dist_type: DistType,
+    quiet: bool,
+    completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+    threads: usize,
+) -> Result<(), Error> {
     let ani = matches!(dist_type, DistType::Jaccard(_, _, true));
     let k_vals = match dist_type {
         DistType::Jaccard(k_idx, k_val, _) => Some((k_idx, k_val)),
@@ -185,7 +260,7 @@ pub fn self_dists_all_stream<W: IoWrite + Send>(
                         if let Some((k_idx, k_f64)) = k_vals {
                             let c1 = completeness_vec.map(|cv| cv[i]);
                             let c2 = completeness_vec.map(|cv| cv[j]);
-                            let j_index = jaccard_index(
+                            let j_index = jaccard_index_generic::<BB>(
                                 sketches.get_sketch_slice(i, k_idx),
                                 sketches.get_sketch_slice(j, k_idx),
                                 sketches.sketchsize64,
@@ -201,7 +276,7 @@ pub fn self_dists_all_stream<W: IoWrite + Send>(
                             let _ =
                                 writeln!(buf, "{}\t{}\t{dist}", ref_names[i], ref_names[j]);
                         } else {
-                            let d = core_acc_dist(
+                            let d = core_acc_dist_generic::<BB>(
                                 sketches,
                                 sketches,
                                 i,
@@ -247,6 +322,38 @@ pub fn self_dists_knn<'a>(
     completeness_vec: Option<&Vec<f64>>,
     completeness_cutoff: f64,
 ) -> SparseDistanceMatrix<'a> {
+    if sketches.is_legacy_format() {
+        self_dists_knn_generic::<LEGACY_BIN_BITS>(
+            sketches,
+            n,
+            knn,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+        )
+    } else {
+        self_dists_knn_generic::<BIN_BITS>(
+            sketches,
+            n,
+            knn,
+            dist_type,
+            quiet,
+            completeness_vec,
+            completeness_cutoff,
+        )
+    }
+}
+
+fn self_dists_knn_generic<'a, const BB: usize>(
+    sketches: &'a MultiSketch,
+    n: usize,
+    knn: usize,
+    dist_type: DistType,
+    quiet: bool,
+    completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+) -> SparseDistanceMatrix<'a> {
     let mut sp_distances = SparseDistanceMatrix::new(sketches, knn, dist_type);
     let k_vals = sp_distances.k_vals();
     let ani = sp_distances.ani();
@@ -270,7 +377,7 @@ pub fn self_dists_knn<'a>(
                         // This uses Option::map to safely access the completeness value for each sample.
                         let c1 = completeness_vec.map(|cv| cv[i]);
                         let c2 = completeness_vec.map(|cv| cv[j]);
-                        let dist = jaccard_index(
+                        let dist = jaccard_index_generic::<BB>(
                             i_sketch,
                             sketches.get_sketch_slice(j, k_idx),
                             sketches.sketchsize64,
@@ -311,7 +418,7 @@ pub fn self_dists_knn<'a>(
                         if i == j {
                             continue;
                         }
-                        let dists = core_acc_dist(
+                        let dists = core_acc_dist_generic::<BB>(
                             sketches,
                             sketches,
                             i,
@@ -348,6 +455,51 @@ pub fn cross_dists_all<'a>(
     query_completeness_vec: Option<&Vec<f64>>,
     completeness_cutoff: f64,
 ) -> DistanceMatrix<'a> {
+    let (ref_legacy, query_legacy) = (
+        ref_sketches.is_legacy_format(),
+        query_sketches.is_legacy_format(),
+    );
+    if ref_legacy != query_legacy {
+        panic!("{}", mismatched_generation_message(ref_legacy, query_legacy));
+    }
+    if ref_legacy {
+        cross_dists_all_generic::<LEGACY_BIN_BITS>(
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+        )
+    } else {
+        cross_dists_all_generic::<BIN_BITS>(
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+        )
+    }
+}
+
+fn cross_dists_all_generic<'a, const BB: usize>(
+    ref_sketches: &'a MultiSketch,
+    query_sketches: &'a MultiSketch,
+    n: usize,
+    n_query: usize,
+    dist_type: DistType,
+    quiet: bool,
+    ref_completeness_vec: Option<&Vec<f64>>,
+    query_completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+) -> DistanceMatrix<'a> {
     let mut distances = DistanceMatrix::new(ref_sketches, Some(query_sketches), dist_type);
     let k_vals = distances.k_vals();
     let ani = distances.ani();
@@ -366,7 +518,7 @@ pub fn cross_dists_all<'a>(
                 if let Some((k_idx, k_f64)) = k_vals {
                     let c1 = ref_completeness_vec.map(|cv| cv[i]);
                     let c2 = query_completeness_vec.map(|cv| cv[j]);
-                    let j_index = jaccard_index(
+                    let j_index = jaccard_index_generic::<BB>(
                         ref_sketches.get_sketch_slice(i, k_idx),
                         query_sketches.get_sketch_slice(j, k_idx),
                         ref_sketches.sketchsize64,
@@ -381,7 +533,7 @@ pub fn cross_dists_all<'a>(
                     };
                     dist_slice[dist_idx] = dist;
                 } else {
-                    let dist = core_acc_dist(
+                    let dist = core_acc_dist_generic::<BB>(
                         ref_sketches,
                         query_sketches,
                         i,
@@ -424,6 +576,57 @@ pub fn cross_dists_all_stream<W: IoWrite + Send>(
     completeness_cutoff: f64,
     threads: usize,
 ) -> Result<(), Error> {
+    let (ref_legacy, query_legacy) = (
+        ref_sketches.is_legacy_format(),
+        query_sketches.is_legacy_format(),
+    );
+    if ref_legacy != query_legacy {
+        bail!(mismatched_generation_message(ref_legacy, query_legacy));
+    }
+    if ref_legacy {
+        cross_dists_all_stream_generic::<LEGACY_BIN_BITS, W>(
+            writer,
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+            threads,
+        )
+    } else {
+        cross_dists_all_stream_generic::<BIN_BITS, W>(
+            writer,
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+            threads,
+        )
+    }
+}
+
+fn cross_dists_all_stream_generic<const BB: usize, W: IoWrite + Send>(
+    writer: &mut W,
+    ref_sketches: &MultiSketch,
+    query_sketches: &MultiSketch,
+    n: usize,
+    n_query: usize,
+    dist_type: DistType,
+    quiet: bool,
+    ref_completeness_vec: Option<&Vec<f64>>,
+    query_completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+    threads: usize,
+) -> Result<(), Error> {
     let ani = matches!(dist_type, DistType::Jaccard(_, _, true));
     let k_vals = match dist_type {
         DistType::Jaccard(k_idx, k_val, _) => Some((k_idx, k_val)),
@@ -454,7 +657,7 @@ pub fn cross_dists_all_stream<W: IoWrite + Send>(
                         if let Some((k_idx, k_f64)) = k_vals {
                             let c1 = ref_completeness_vec.map(|cv| cv[i]);
                             let c2 = query_completeness_vec.map(|cv| cv[j]);
-                            let j_index = jaccard_index(
+                            let j_index = jaccard_index_generic::<BB>(
                                 ref_sketches.get_sketch_slice(i, k_idx),
                                 query_sketches.get_sketch_slice(j, k_idx),
                                 ref_sketches.sketchsize64,
@@ -473,7 +676,7 @@ pub fn cross_dists_all_stream<W: IoWrite + Send>(
                                 ref_names[i], query_names[j]
                             );
                         } else {
-                            let d = core_acc_dist(
+                            let d = core_acc_dist_generic::<BB>(
                                 ref_sketches,
                                 query_sketches,
                                 i,
@@ -528,6 +731,54 @@ pub fn cross_dists_knn<'a>(
     query_completeness_vec: Option<&Vec<f64>>,
     completeness_cutoff: f64,
 ) -> SparseDistanceMatrix<'a> {
+    let (ref_legacy, query_legacy) = (
+        ref_sketches.is_legacy_format(),
+        query_sketches.is_legacy_format(),
+    );
+    if ref_legacy != query_legacy {
+        panic!("{}", mismatched_generation_message(ref_legacy, query_legacy));
+    }
+    if ref_legacy {
+        cross_dists_knn_generic::<LEGACY_BIN_BITS>(
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            knn,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+        )
+    } else {
+        cross_dists_knn_generic::<BIN_BITS>(
+            ref_sketches,
+            query_sketches,
+            n,
+            n_query,
+            knn,
+            dist_type,
+            quiet,
+            ref_completeness_vec,
+            query_completeness_vec,
+            completeness_cutoff,
+        )
+    }
+}
+
+fn cross_dists_knn_generic<'a, const BB: usize>(
+    ref_sketches: &'a MultiSketch,
+    query_sketches: &'a MultiSketch,
+    n: usize,
+    n_query: usize,
+    knn: usize,
+    dist_type: DistType,
+    quiet: bool,
+    ref_completeness_vec: Option<&Vec<f64>>,
+    query_completeness_vec: Option<&Vec<f64>>,
+    completeness_cutoff: f64,
+) -> SparseDistanceMatrix<'a> {
     if n == 0 {
         panic!("Reference database has no loaded samples");
     }
@@ -554,7 +805,7 @@ pub fn cross_dists_knn<'a>(
                     for ri in 0..n {
                         let c1 = query_completeness_vec.map(|cv| cv[qi]);
                         let c2 = ref_completeness_vec.map(|cv| cv[ri]);
-                        let dist = jaccard_index(
+                        let dist = jaccard_index_generic::<BB>(
                             qi_sketch,
                             ref_sketches.get_sketch_slice(ri, k_idx),
                             ref_sketches.sketchsize64,
@@ -588,7 +839,7 @@ pub fn cross_dists_knn<'a>(
                 .for_each(|(qi, row_dist_slice)| {
                     let mut heap = BinaryHeap::with_capacity(knn + 1);
                     for ri in 0..n {
-                        let dists = core_acc_dist(
+                        let dists = core_acc_dist_generic::<BB>(
                             ref_sketches,
                             query_sketches,
                             ri,
