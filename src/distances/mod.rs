@@ -55,6 +55,10 @@ fn push_heap<T: PartialOrd + Ord>(heap: &mut BinaryHeap<T>, dist_item: T, knn: u
 //      Streaming out of distances, when a sample is 'ready'
 
 /// Self query mode (dense, all distances)
+///
+/// Computes all pairwise distances within a single set of `sketches`, iterating
+/// the upper triangle: `i` and `j` both index into `sketches`, with `i` the outer
+/// (row) index and `j` the inner (column) index, `j` always `> i`.
 pub fn self_dists_all<'a>(
     sketches: &'a MultiSketch,
     n: usize,
@@ -224,6 +228,11 @@ pub fn self_dists_knn<'a>(
 }
 
 /// Cross-query mode (dense, all distances)
+///
+/// Computes all pairwise distances between `ref_sketches` and `query_sketches`:
+/// `i` indexes `ref_sketches` (outer/row), `j` indexes `query_sketches`
+/// (inner/column), chunked by `n_query` — i.e. ref-outer, query-inner ordering,
+/// matching the row-major layout consumed by [`DistanceMatrix`].
 pub fn cross_dists_all<'a>(
     ref_sketches: &'a MultiSketch,
     query_sketches: &'a MultiSketch,

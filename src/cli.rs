@@ -85,6 +85,18 @@ pub fn check_and_set_threads(threads: usize) {
         .unwrap();
 }
 
+/// Sets the global rayon thread pool size for operations that spawn an internal
+/// writer thread (sketching, and appending to an existing sketch database).
+///
+/// Reserves one extra thread for the writer so that `threads` workers remain
+/// available for compute; equivalent to `check_and_set_threads(threads + 1)`.
+/// Callers embedding this crate as a library (rather than via the CLI) should call
+/// this before sketching/appending, and plain [`check_and_set_threads`] before
+/// distance/query/delete operations that don't spawn a writer.
+pub fn set_threads_with_writer(threads: usize) {
+    check_and_set_threads(threads + 1);
+}
+
 /// Options that apply to all subcommands
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
