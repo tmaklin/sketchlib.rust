@@ -113,13 +113,18 @@ pub trait Distances<'a> {
         }
         names
     }
+
+    /// The number of reference and query (if set) samples
+    fn n_samples(&self) -> (usize, Option<usize>);
+
+    /// The (rows, columns) of the underlying data (C-order/row-major)
+    fn shape(&self) -> (usize, usize);
 }
 
 /// A dense distance matrix in long form, which can represent ref vs ref
 /// or ref vs query depending on whether `query_names` is set
 pub struct DistanceMatrix<'a> {
-    /// The total number of distances (upper triangle only)
-    pub n_distances: usize,
+    n_distances: usize,
     jaccard: DistType,
     distances: Vec<f32>,
     ref_names: Vec<&'a str>,
@@ -160,7 +165,12 @@ impl<'a> DistanceMatrix<'a> {
         }
     }
 
-    /// Reference to the underlying distances which can be written to
+    /// Reference to the underlying distances. User needs to deal with shape
+    pub fn dists_as_ref(&self) -> &Vec<f32> {
+        &self.distances
+    }
+
+    /// Reference to the underlying distances which can be written to (typically used for parallel construction)
     pub fn dists_mut(&mut self) -> &mut Vec<f32> {
         &mut self.distances
     }
@@ -190,6 +200,14 @@ impl<'a> DistanceMatrix<'a> {
 impl<'a> Distances<'a> for DistanceMatrix<'a> {
     fn jaccard(&self) -> &DistType {
         &self.jaccard
+    }
+
+    fn n_samples(&self) -> (usize, Option<usize>) {
+        (self.ref_names.len(), self.query_names.as_ref().map_or(None, |q_names| Some(q_names.len())))
+    }
+
+    fn shape(&self) -> (usize, usize) {
+        (self.n_distances, self.n_dist_cols())
     }
 }
 
@@ -366,6 +384,11 @@ impl<'a> SparseDistanceMatrix<'a> {
         }
     }
 
+    /// Reference/borrow of underlying distance storage
+    pub fn dists_as_ref(&self) -> &DistVec {
+        &self.distances
+    }
+
     /// Mutable reference to the underlying distance storage
     pub fn dists_mut(&mut self) -> &mut DistVec {
         &mut self.distances
@@ -375,6 +398,14 @@ impl<'a> SparseDistanceMatrix<'a> {
 impl<'a> Distances<'a> for SparseDistanceMatrix<'a> {
     fn jaccard(&self) -> &DistType {
         &self.jaccard
+    }
+
+    fn n_samples(&self) -> (usize, Option<usize>) {
+        (self.ref_names.len(), self.query_names.as_ref().map_or(None, |q_names| Some(q_names.len())))
+    }
+
+    fn shape(&self) -> (usize, usize) {
+        (self.n_distances, self.knn)
     }
 }
 
