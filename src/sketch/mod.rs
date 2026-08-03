@@ -131,12 +131,18 @@ pub struct Sketch {
     usigs: SketchVec,
     name: String,
     index: Option<usize>,
-    rc: bool,
-    reads: bool,
-    seq_length: usize,
-    densified: bool,
-    acgt: [usize; 4],
-    non_acgt: usize,
+    /// Sequence and reverse complement used
+    pub rc: bool,
+    /// Built from reads (fastq)
+    pub reads: bool,
+    /// Assembled sequence length (fasta: exact; fastq: estimate)
+    pub seq_length: usize,
+    /// Sketch required densification
+    pub densified: bool,
+    /// Number of [A, C, G, T] bases
+    pub acgt: [usize; 4],
+    /// Number of non-ACGT bases
+    pub non_acgt: usize,
 }
 
 impl Default for Sketch {
@@ -532,7 +538,7 @@ pub fn sketch_data<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         .enumerate()
         .map(|(idx, hash_it)| {
             let sample_name = if opts.concat_fasta {
-                format!("{}_{}", &opts.name, idx + 1)
+                format!("{}_{}", opts.name, idx + 1)
             } else {
                 opts.name.to_string()
             };

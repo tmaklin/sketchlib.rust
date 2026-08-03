@@ -357,7 +357,7 @@ mod tests {
         }
 
         // Disjoint reference: 14412_3#82 + 14412_3#84 only
-        Command::new(cmd::cargo_bin("sketchlib"))
+        Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "sketch",
@@ -374,7 +374,7 @@ mod tests {
             .success();
 
         // Query: R6 + TIGR4
-        Command::new(cmd::cargo_bin("sketchlib"))
+        Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "sketch",
@@ -391,7 +391,7 @@ mod tests {
             .success();
 
         // All 4 genomes — used for self-kNN consistency test only
-        Command::new(cmd::cargo_bin("sketchlib"))
+        Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "sketch",
@@ -416,7 +416,7 @@ mod tests {
         let sandbox = TestSetup::setup();
         sketch_ref_and_query(&sandbox);
 
-        let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let output = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
@@ -442,7 +442,7 @@ mod tests {
         sketch_ref_and_query(&sandbox);
 
         // Dense: all bact_ref × query pairs (format: ref \t query \t ani)
-        let dense_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let dense_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args(["dist", "bact_db", "query_db", "-k", "21", "--ani"])
             .output()
@@ -471,7 +471,7 @@ mod tests {
         }
 
         // kNN output columns: query(0) \t ref(1) \t ani(2)
-        let knn_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let knn_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
@@ -505,7 +505,7 @@ mod tests {
         let sandbox = TestSetup::setup();
         sketch_ref_and_query(&sandbox);
 
-        let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let output = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
@@ -549,7 +549,7 @@ mod tests {
         sketch_ref_and_query(&sandbox);
 
         // Self-kNN on all 4 genomes with knn=3
-        let self_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let self_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args(["dist", "ref_db", "--knn", "3", "-k", "21", "--ani"])
             .output()
@@ -558,7 +558,7 @@ mod tests {
 
         // Cross-query kNN=1: query=R6+TIGR4 against ref=14412_3#82+14412_3#84
         // kNN output columns: query(0) \t ref(1) \t ani(2)
-        let cross_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let cross_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist", "bact_db", "query_db", "--knn", "1", "-k", "21", "--ani",
@@ -629,7 +629,7 @@ mod tests {
         );
 
         // Both completeness flags accepted; output has correct row count and valid ANI range
-        let comp_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let comp_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist",
@@ -670,7 +670,7 @@ mod tests {
                 ("14412_3#84.contigs_velvet.fa.gz", 85.0),
             ],
         );
-        let bad_out = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let bad_out = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist",
@@ -706,7 +706,7 @@ mod tests {
         let sandbox = TestSetup::setup();
         sketch_ref_and_query(&sandbox);
 
-        let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let output = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args(["dist", "bact_db", "query_db", "--knn", "1"])
             .output()
@@ -749,7 +749,7 @@ mod tests {
         let sandbox = TestSetup::setup();
         sketch_ref_and_query(&sandbox);
 
-        let output = std::process::Command::new(cmd::cargo_bin("sketchlib"))
+        let output = std::process::Command::new(cmd::cargo_bin!("sketchlib"))
             .current_dir(sandbox.get_wd())
             .args([
                 "dist", "bact_db", "query_db", "--knn", "2", "-k", "21", "--ani",
@@ -884,6 +884,98 @@ mod tests {
         {
             assert_abs_diff_eq!(*dist, *iter_dist as f64, epsilon = 1e-4);
             assert!(iter_accessory.is_none());
+        }
+    }
+
+    #[test]
+    fn distance_matrix_api_metadata_and_storage() {
+        use sketchlib::distances::distance_matrix::{DistVec, Distances};
+        use sketchlib::distances::{
+            cross_dists_all, cross_dists_knn, self_dists_all, self_dists_knn, set_k,
+        };
+        use sketchlib::sketch::multisketch::MultiSketch;
+
+        let sandbox = TestSetup::setup();
+        sketch_ref_and_query(&sandbox);
+
+        let references = MultiSketch::load(&sandbox.file_string("bact_db", TestDir::Output))
+            .expect("failed to load reference sketches");
+        let queries = MultiSketch::load(&sandbox.file_string("query_db", TestDir::Output))
+            .expect("failed to load query sketches");
+        let all_references = MultiSketch::load(&sandbox.file_string("ref_db", TestDir::Output))
+            .expect("failed to load all reference sketches");
+
+        let n_ref = references.number_samples_loaded();
+        let n_query = queries.number_samples_loaded();
+        let n_all = all_references.number_samples_loaded();
+
+        // Dense self-query Core/Accessory matrices are condensed to n * (n - 1) / 2 rows
+        // with one core and one accessory value per row.
+        let dense_self = self_dists_all(
+            &all_references,
+            n_all,
+            set_k(&all_references, None, false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        );
+        assert_eq!(dense_self.n_samples(), (n_all, None));
+        assert_eq!(dense_self.shape(), (n_all * (n_all - 1) / 2, 2));
+        assert_eq!(dense_self.dists_as_ref().len(), n_all * (n_all - 1));
+
+        // Dense cross-query Jaccard matrices are rectangular and have one value per pair.
+        let dense_cross = cross_dists_all(
+            &references,
+            &queries,
+            n_ref,
+            n_query,
+            set_k(&references, Some(17), false).expect("set_k failed"),
+            true,
+            None,
+            None,
+            0.0,
+        );
+        assert_eq!(dense_cross.n_samples(), (n_ref, Some(n_query)));
+        assert_eq!(dense_cross.shape(), (n_ref * n_query, 1));
+        assert_eq!(dense_cross.dists_as_ref().len(), n_ref * n_query);
+
+        // Sparse self-query Jaccard matrices retain knn values per reference row.
+        let self_knn = 1;
+        let sparse_self = self_dists_knn(
+            &all_references,
+            n_all,
+            self_knn,
+            set_k(&all_references, Some(17), false).expect("set_k failed"),
+            true,
+            None,
+            0.0,
+        );
+        assert_eq!(sparse_self.n_samples(), (n_all, None));
+        assert_eq!(sparse_self.shape(), (n_all * self_knn, self_knn));
+        match sparse_self.dists_as_ref() {
+            DistVec::Jaccard(distances) => assert_eq!(distances.len(), n_all * self_knn),
+            DistVec::CoreAcc(_) => panic!("expected sparse Jaccard storage"),
+        }
+
+        // Sparse cross-query Core/Accessory matrices use query rows and reference columns.
+        let cross_knn = 1;
+        let sparse_cross = cross_dists_knn(
+            &references,
+            &queries,
+            n_ref,
+            n_query,
+            cross_knn,
+            set_k(&references, None, false).expect("set_k failed"),
+            true,
+            None,
+            None,
+            0.0,
+        );
+        assert_eq!(sparse_cross.n_samples(), (n_ref, Some(n_query)));
+        assert_eq!(sparse_cross.shape(), (n_query * cross_knn, cross_knn));
+        match sparse_cross.dists_as_ref() {
+            DistVec::CoreAcc(distances) => assert_eq!(distances.len(), n_query * cross_knn),
+            DistVec::Jaccard(_) => panic!("expected sparse CoreAcc storage"),
         }
     }
 

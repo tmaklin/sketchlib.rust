@@ -228,11 +228,11 @@ pub enum Commands {
         #[arg(long, value_parser = valid_cpus, default_value_t = 1)]
         threads: usize,
 
-        /// File listing reference sample completeness estimates 0.0-1.0 (tab separated: genome_id<tab>completeness)
+        /// File listing reference sample completeness estimates 0.0-1.0 (tab separated: `genome_id<tab>completeness`)
         #[arg(long)]
         ref_completeness_file: Option<String>,
 
-        /// File listing query sample completeness estimates 0.0-1.0 (tab separated: genome_id<tab>completeness).
+        /// File listing query sample completeness estimates 0.0-1.0 (tab separated: `genome_id<tab>completeness`).
         /// Only used in cross-query mode (when a query database is provided).
         #[arg(long)]
         query_completeness_file: Option<String>,
@@ -458,7 +458,7 @@ pub enum InvertedCommands {
         #[arg(long, value_parser = valid_cpus, default_value_t = 1)]
         threads: usize,
 
-        /// File listing sample completeness estimates 0.0-1.0 (tab separated: genome_id<tab>completeness)
+        /// File listing sample completeness estimates 0.0-1.0 (tab separated: `genome_id<tab>completeness`)
         #[arg(long)]
         ref_completeness_file: Option<String>,
 
