@@ -538,7 +538,7 @@ pub fn sketch_data<I: Iterator<Item = (Vec<u8>, Option<Vec<u8>>)>>(
         .enumerate()
         .map(|(idx, hash_it)| {
             let sample_name = if opts.concat_fasta {
-                format!("{}_{}", &opts.name, idx + 1)
+                format!("{}_{}", opts.name, idx + 1)
             } else {
                 opts.name.to_string()
             };
