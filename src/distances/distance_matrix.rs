@@ -203,7 +203,10 @@ impl<'a> Distances<'a> for DistanceMatrix<'a> {
     }
 
     fn n_samples(&self) -> (usize, Option<usize>) {
-        (self.ref_names.len(), self.query_names.as_ref().map_or(None, |q_names| Some(q_names.len())))
+        (
+            self.ref_names.len(),
+            self.query_names.as_ref().map(|q_names| q_names.len()),
+        )
     }
 
     fn shape(&self) -> (usize, usize) {
@@ -401,7 +404,10 @@ impl<'a> Distances<'a> for SparseDistanceMatrix<'a> {
     }
 
     fn n_samples(&self) -> (usize, Option<usize>) {
-        (self.ref_names.len(), self.query_names.as_ref().map_or(None, |q_names| Some(q_names.len())))
+        (
+            self.ref_names.len(),
+            self.query_names.as_ref().map(|q_names| q_names.len()),
+        )
     }
 
     fn shape(&self) -> (usize, usize) {

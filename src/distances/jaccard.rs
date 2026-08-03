@@ -175,7 +175,7 @@ unsafe fn jaccard_neon_unroll2_inner(a: &[u64], b: &[u64]) -> u32 {
             b.as_ptr().add(base + chunk) as _,
         ) as u32;
     }
-    if n_chunks % 2 != 0 {
+    if !n_chunks.is_multiple_of(2) {
         let base = (n_chunks - 1) * chunk;
         total += one_chunk(a.as_ptr().add(base) as _, b.as_ptr().add(base) as _) as u32;
     }
