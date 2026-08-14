@@ -37,8 +37,8 @@ impl RollHash for AaHashIterator {
             self.index = new_it.1;
             Ok(())
         } else {
-            let seq_str = std::str::from_utf8(&self.seq).unwrap();
-            return Err(anyhow::anyhow!("K-mer size {} larger than smallest valid sequence {}", k, seq_str))
+            let seq_str = std::str::from_utf8(&self.seq).unwrap_or("<not a valid UTF-8 string>");
+            Err(anyhow::anyhow!("K-mer size {} larger than smallest valid sequence {}", k, seq_str))
         }
     }
 
