@@ -496,7 +496,7 @@ impl Inverted {
             };
 
             let (signs, densified) =
-                Sketch::get_signs(&mut **hash_it, k, &mut read_filter, sketch_size);
+                Sketch::get_signs(&mut **hash_it, k, &mut read_filter, sketch_size).unwrap();
             if densified {
                 logw("The query was densified", Some("trace"));
             }
